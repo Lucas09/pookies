@@ -149,7 +149,10 @@ const store = { get(k){ try{return localStorage.getItem(k)}catch(e){return null}
   const m = location.hash.match(/k=([A-Za-z0-9_-]+)/), t = location.hash.match(/t=([A-Za-z0-9]+)/);
   if (m) store.set("pk-key", m[1]);
   if (t) store.set("pk-tmdb", t[1]);
-  if (m || t) history.replaceState(null, "", location.pathname + location.search);
+  // Keep the keys in the address so "Add to Home Screen" saves a link that works on its own
+  // (iPhone home-screen apps don't share storage with Safari).
+  const k=store.get("pk-key"), tk=store.get("pk-tmdb");
+  if (k){ const want="#k="+k+(tk?"&t="+tk:""); if (location.hash!==want) history.replaceState(null, "", location.pathname + location.search + want); }
 })();
 const LIST_KEY = store.get("pk-key");
 
@@ -268,7 +271,12 @@ function render(){
   const next=state.items.filter(i=>i.kind==="plan"&&!i.done&&i.date&&i.date>=today()).sort((a,b)=>a.date.localeCompare(b.date))[0];
   const nx=$("#next"); nx.hidden=!next; if(next) nx.innerHTML=`Next up<b>${esc(next.title)}</b>${esc(fmtDate(next.date,next.time))}`;
   const L=$("#list");
-  if(state.err==="nokey"){ L.innerHTML=`<div class="empty"><b>Open your private link first</b>This site only shows your list when opened from the special link Lucas got. Open that link once on this phone and it'll be remembered.</div>`; return; }
+  if(state.err==="nokey"){ L.innerHTML=`<div class="empty"><b>Paste your private link</b>This site only shows your list with your private link. Paste it here once and this phone remembers it.
+    <form id="keyf" class="bar" style="margin-top:12px"><input class="grow" id="keyin" placeholder="https://lucas09.github.io/pookies/#k=…" autocomplete="off"><button class="btn">Open</button></form></div>`;
+    $("#keyf").onsubmit=e=>{ e.preventDefault(); const v=$("#keyin").value; const m=v.match(/k=([A-Za-z0-9_-]+)/), t=v.match(/t=([A-Za-z0-9]+)/);
+      if(!m){ toast("That doesn't look like the private link"); return; }
+      store.set("pk-key",m[1]); if(t) store.set("pk-tmdb",t[1]); location.replace(location.pathname+"#k="+m[1]+(t?"&t="+t[1]:"")); location.reload(); };
+    return; }
   if(state.err==="load"){ L.innerHTML=`<div class="empty"><b>Couldn't load your lists</b>Check your connection, then pull to refresh or reopen the page.</div>`; return; }
   if(!state.ready){ L.innerHTML=`<div class="status"><span class="spin"></span>Loading your lists…</div>`; return; }
   const xs=visible();
