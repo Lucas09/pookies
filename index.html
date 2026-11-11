@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#6B4EE6">
+<title>The Pookies List</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%23E0483A' d='M16 28s-11-6.6-11-14.2C5 9.5 8.2 6.5 11.8 6.5c2 0 3.4 1 4.2 2.3.8-1.3 2.2-2.3 4.2-2.3C23.8 6.5 27 9.5 27 13.8 27 21.4 16 28 16 28z'/%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%236B4EE6'/%3E%3Cpath fill='%23fff' d='M16 26s-9-5.4-9-11.6C7 10.9 9.6 8.5 12.5 8.5c1.6 0 2.8.8 3.5 1.9.7-1.1 1.9-1.9 3.5-1.9 2.9 0 5.5 2.4 5.5 5.9C25 20.6 16 26 16 26z'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: one column app, header + segmented tabs, list of cards per tab, bottom sheet for search/add */
+:root{
+  --bg:#F7F5FB; --surface:#FFFFFF; --ink:#211B2E; --muted:#6C6680; --line:#E4E0EE;
+  --watch:#6B4EE6; --eat:#E0483A; --idea:#128C7E; --plan:#C27A00;
+  --accent:var(--watch);
+  --display:"Bricolage Grotesque",ui-rounded,system-ui,sans-serif;
+  --body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --radius:14px; color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#15121C; --surface:#1F1B29; --ink:#EEEAF6; --muted:#A29CB5; --line:#332D42;
+  --watch:#9C86FF; --eat:#FF7A6B; --idea:#3CC5B3; --plan:#F0A93B; color-scheme:dark}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.45;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body[data-tab="eat"]{--accent:var(--eat)} body[data-tab="idea"]{--accent:var(--idea)} body[data-tab="plan"]{--accent:var(--plan)}
+img{max-width:100%}
+[hidden]{display:none!important}
+.wrap{max-width:720px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 48px;display:flex;flex-direction:column;gap:18px}
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font-family:var(--display);font-weight:800;font-size:clamp(28px,7vw,40px);line-height:1;margin:0;letter-spacing:-.02em}
+h1 span{color:var(--accent);transition:color .2s}
+.sub{color:var(--muted);margin:6px 0 0;font-size:14px}
+.next{font-size:13px;color:var(--muted);text-align:right;min-width:0}
+.next b{display:block;color:var(--ink);font-weight:600}
+nav{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px;position:sticky;top:env(safe-area-inset-top,0px);z-index:5}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+nav button{font:600 14px var(--body);border:0;background:none;color:var(--muted);padding:9px 4px;border-radius:999px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;min-width:0}
+nav button .n{font-size:11px;font-variant-numeric:tabular-nums;opacity:.7}
+nav button[aria-selected="true"]{background:var(--accent);color:#fff}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.bar .grow{flex:1 1 200px;min-width:0}
+input,textarea,select{font:inherit;font-size:16px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+textarea{resize:vertical;min-height:64px}
+.btn{font:600 14px var(--body);border:0;border-radius:10px;padding:10px 14px;cursor:pointer;background:var(--accent);color:#fff;white-space:nowrap}
+.btn.ghost{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}
+.btn.plain{background:none;color:var(--muted);padding:6px 8px}
+.btn:disabled{opacity:.5;cursor:default}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font:500 13px var(--body);border:1px solid var(--line);background:var(--surface);color:var(--muted);border-radius:999px;padding:5px 11px;cursor:pointer}
+.chip[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+.list{display:flex;flex-direction:column;gap:10px}
+.item{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}
+.item.has-poster{grid-template-columns:auto auto 1fr}
+.item.done{opacity:.62}
+.tick{width:26px;height:26px;border-radius:50%;border:2px solid var(--accent);background:none;cursor:pointer;display:grid;place-items:center;color:#fff;padding:0;margin-top:1px}
+.item.done .tick{background:var(--accent)}
+.tick svg{width:14px;height:14px;opacity:0}
+.item.done .tick svg{opacity:1}
+.poster{width:64px;aspect-ratio:2/3;border-radius:8px;overflow:hidden;flex:none;background:var(--line);position:relative}
+.poster img{width:100%;height:100%;object-fit:cover;display:block}
+.poster.gen{padding:7px;display:flex;flex-direction:column;justify-content:space-between;color:#fff;background:linear-gradient(160deg,hsl(var(--h) 62% 46%),hsl(calc(var(--h) + 40) 70% 22%))}
+.poster.gen b{font-family:var(--display);font-weight:800;font-size:10.5px;line-height:1.05;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+.poster.gen i{font-style:normal;font-size:9px;opacity:.8;letter-spacing:.06em;text-transform:uppercase}
+.body{min-width:0;display:flex;flex-direction:column;gap:4px}
+.t{font-family:var(--display);font-weight:700;font-size:17px;line-height:1.2;overflow-wrap:anywhere}
+.item.done .t{text-decoration:line-through;text-decoration-thickness:2px}
+.meta{font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 10px}
+.desc{font-size:14px;overflow-wrap:anywhere}
+.desc.clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.acts{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;align-items:center}
+.acts a,.acts button{font:500 13px var(--body);color:var(--accent);background:none;border:0;padding:0;cursor:pointer;text-decoration:none}
+.acts .del{color:var(--muted);margin-left:auto}
+.date{font-family:var(--display);font-weight:700;color:var(--accent);font-variant-numeric:tabular-nums;font-size:13px;letter-spacing:.04em;text-transform:uppercase}
+.empty{border:1.5px dashed var(--line);border-radius:var(--radius);padding:28px 18px;text-align:center;color:var(--muted)}
+.empty b{display:block;color:var(--ink);font-family:var(--display);font-size:18px;margin-bottom:4px}
+.scrim{position:fixed;inset:0;background:rgba(10,8,16,.45);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--bg);width:100%;max-width:720px;max-height:90%;overflow:auto;border-radius:18px 18px 0 0;padding:18px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;flex-direction:column;gap:12px}
+@media (min-width:760px){.scrim{align-items:center}.sheet{border-radius:18px;max-height:82%}}
+.sheet h2{font-family:var(--display);font-size:22px;margin:0}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.result{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;grid-template-columns:1fr;gap:12px;align-items:start}
+.result.has-poster{grid-template-columns:auto 1fr}
+.rb{min-width:0;display:flex;flex-direction:column;gap:4px}
+.note{font-size:12.5px;color:var(--muted);margin:0}
+.status{font-size:14px;color:var(--muted);padding:6px 0}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-1px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}h1 span{transition:none}}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 14px;border-radius:999px;font-size:14px;z-index:30}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:440px){.grid2{grid-template-columns:1fr} nav button .n{display:none}}
+</style>
+</head>
+<body data-tab="watch">
+<div class="wrap">
+  <header>
+    <div>
+      <h1>The Pookies <span>List</span></h1>
+      <p class="sub">Everything the two of you want to watch, eat and do.</p>
+    </div>
+    <div class="next" id="next" hidden></div>
+  </header>
+
+  <nav role="tablist" aria-label="Lists">
+    <button role="tab" data-tab="watch" aria-selected="true">Watch <span class="n" id="n-watch"></span></button>
+    <button role="tab" data-tab="eat" aria-selected="false">Eat <span class="n" id="n-eat"></span></button>
+    <button role="tab" data-tab="idea" aria-selected="false">Ideas <span class="n" id="n-idea"></span></button>
+    <button role="tab" data-tab="plan" aria-selected="false">Plans <span class="n" id="n-plan"></span></button>
+  </nav>
+
+  <div class="bar">
+    <button class="btn" id="primary">Search movies &amp; TV</button>
+    <button class="btn ghost" id="secondary">Add by hand</button>
+  </div>
+
+  <div class="seg" id="filters"></div>
+  <div class="list" id="list" aria-live="polite"></div>
+</div>
+
+<div class="scrim" id="scrim" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/* ---------- config ---------- */
+const SUPABASE_URL = "https://anuqikzewatebassozfh.supabase.co";
+const SUPABASE_KEY = "sb_publishable_Oy3OaV9bDSfR8Ow5MESqCQ_vBuJkpYt"; // publishable, safe in the browser; RLS needs the private list key too
+const CPH_BBOX = "55.60,12.45,55.73,12.65"; // south,west,north,east for Overpass
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const CHECK = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
+const store = { get(k){ try{return localStorage.getItem(k)}catch(e){return null} }, set(k,v){ try{localStorage.setItem(k,v)}catch(e){} } };
+
+/* list key arrives once via the link: …/#k=SECRET */
+(function(){
+  const m = location.hash.match(/k=([A-Za-z0-9_-]+)/);
+  if (m){ store.set("pk-key", m[1]); history.replaceState(null, "", location.pathname + location.search); }
+})();
+const LIST_KEY = store.get("pk-key");
+
+const TABS = {
+  watch:{primary:"Search movies & TV", filters:["To watch","Watched","All"], doneWord:"watched", empty:["Nothing on the watchlist yet","Search for a movie or show and add it here."]},
+  eat:{primary:"Find a restaurant", filters:["To try","Been there","All"], doneWord:"been there", empty:["No restaurants saved yet","Search Copenhagen restaurants by name or cuisine."]},
+  idea:{primary:"Get inspired", filters:["To do","Done","All"], doneWord:"done", empty:["No date ideas yet","Add your own, or tap Get inspired for some Copenhagen ideas."]},
+  plan:{primary:"Add a plan", filters:["Upcoming","Past","All"], doneWord:"done", empty:["Nothing planned yet","Add a plan with a date, or turn any saved movie, restaurant or idea into one."]},
+};
+
+let state = { tab: TABS[store.get("pk-tab")] ? store.get("pk-tab") : "watch", filter:0, items:[], ready:false, err:null };
+
+function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>t.hidden=true,2200); }
+function today(){ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function fmtDate(s,time){ if(!s) return ""; const d=new Date(s+"T12:00:00"); const out=d.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}); return time? out+" · "+time : out; }
+
+/* ---------- database (Supabase REST) ---------- */
+async function api(path, opts={}){
+  const res = await fetch(SUPABASE_URL + "/rest/v1/" + path, {
+    ...opts,
+    headers: { "apikey": SUPABASE_KEY, "x-pookie-key": LIST_KEY || "", "Content-Type":"application/json", "Prefer":"return=representation", ...(opts.headers||{}) }
+  });
+  if(!res.ok){ const e=new Error("HTTP "+res.status); e.status=res.status; throw e; }
+  return res.status===204 ? null : res.json();
+}
+const flat = r => ({ ...(r.data||{}), id:r.id, kind:r.kind, title:r.title, done:r.done, createdAt:r.created_at });
+function split(d){ const {id,kind,title,done,createdAt,...rest}=d; return {kind,title,done,data:rest}; }
+
+async function load(){
+  if(!LIST_KEY){ state.err="nokey"; render(); return; }
+  try{
+    const rows = await api("items?select=*&order=created_at.desc");
+    state.items = rows.map(flat); state.ready=true; state.err=null;
+  }catch(e){ if(!state.ready) state.err = "load"; }
+  render();
+}
+async function addItem(d){
+  try{
+    const [row] = await api("items",{method:"POST", body:JSON.stringify({...split({...d, done:false})})});
+    state.items.unshift(flat(row)); render();
+    toast("Added to "+({watch:"Watch",eat:"Eat",idea:"Ideas",plan:"Plans"})[d.kind]); return true;
+  }catch(e){ toast("Couldn't save. Check your connection and try again."); return false; }
+}
+async function patchItem(it, changes){
+  const next={...it, ...changes};
+  const prev=state.items.slice();
+  state.items=state.items.map(i=>i.id===it.id?next:i); render();
+  try{ await api("items?id=eq."+encodeURIComponent(it.id),{method:"PATCH", body:JSON.stringify(split(next))}); return true; }
+  catch(e){ state.items=prev; render(); toast("Couldn't save. Try again."); return false; }
+}
+async function deleteItem(it){
+  const prev=state.items.slice();
+  state.items=state.items.filter(i=>i.id!==it.id); render();
+  try{ await api("items?id=eq."+encodeURIComponent(it.id),{method:"DELETE"}); toast("Removed"); }
+  catch(e){ state.items=prev; render(); toast("Couldn't remove. Try again."); }
+}
+
+/* ---------- rendering ---------- */
+function setTab(t){ state.tab=t; state.filter=0; store.set("pk-tab",t); render(); window.scrollTo({top:0}); }
+document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>setTab(b.dataset.tab)));
+
+function visible(){
+  const t=state.tab, f=state.filter;
+  let xs=state.items.filter(i=>i.kind===t);
+  if(t==="plan"){
+    const td=today();
+    if(f===0) xs=xs.filter(i=>!i.done && (i.date||"9999")>=td);
+    if(f===1) xs=xs.filter(i=>i.done || (i.date && i.date<td));
+    xs.sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999") * (f===1?-1:1));
+  } else {
+    if(f===0) xs=xs.filter(i=>!i.done);
+    if(f===1) xs=xs.filter(i=>i.done);
+  }
+  return xs;
+}
+
+function posterHTML(title,year,type,src){
+  let h=0; for(const c of String(title)) h=(h*31+c.charCodeAt(0))%360;
+  const gen=`<div class="poster gen" style="--h:${h}" aria-hidden="true"><b>${esc(title)}</b><i>${esc([type==="tv"?"TV":"Film",String(year||"").slice(0,4)].filter(Boolean).join(" · "))}</i></div>`;
+  if(!src) return gen;
+  return `<div class="poster"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.outerHTML=this.parentNode.dataset.gen" ></div>`.replace('<div class="poster">',`<div class="poster" data-gen="${esc(gen)}">`);
+}
+function mapLink(i){ return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(i.title+" "+(i.address||"")+" København")}`; }
+
+function itemHTML(i){
+  const tw=TABS[i.kind];
+  let meta=[], desc="", links="";
+  if(i.kind==="watch"){ meta=[i.type==="tv"?"TV":"Movie", i.year, i.genre, i.length].filter(Boolean); desc=i.overview; }
+  if(i.kind==="eat"){ meta=[i.cuisine, i.area].filter(Boolean); desc=[i.address, i.hours?("Open "+i.hours):""].filter(Boolean).join(" · ");
+    links=`<a href="${mapLink(i)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}`; }
+  if(i.kind==="idea"){ meta=[i.cost, i.when].filter(Boolean); desc=i.notes; }
+  if(i.kind==="plan"){ desc=i.notes; }
+  if(i.note && i.kind!=="idea" && i.kind!=="plan") desc = desc ? desc+" — "+i.note : i.note;
+  const date = i.kind==="plan" ? `<div class="date">${esc(i.date?fmtDate(i.date,i.time):"No date yet")}</div>` : "";
+  const planBtn = i.kind!=="plan" ? `<button data-act="plan" data-id="${esc(i.id)}">Make it a plan</button>` : `<button data-act="edit" data-id="${esc(i.id)}">Edit</button>`;
+  return `<div class="item${i.done?" done":""}${i.kind==="watch"?" has-poster":""}">
+    <button class="tick" data-act="toggle" data-id="${esc(i.id)}" aria-label="${i.done?"Mark as not "+tw.doneWord:"Mark as "+tw.doneWord}">${CHECK}</button>${i.kind==="watch"?posterHTML(i.title,i.year,i.type,i.poster):""}
+    <div class="body">${date}
+      <div class="t">${esc(i.title)}</div>
+      ${meta.length?`<div class="meta">${meta.map(m=>`<span>${esc(m)}</span>`).join("")}</div>`:""}
+      ${desc?`<div class="desc${i.kind==="watch"?" clamp":""}">${esc(desc)}</div>`:""}
+      <div class="acts">${links}${planBtn}<button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
+    </div></div>`;
+}
+
+function render(){
+  document.body.dataset.tab=state.tab;
+  const tw=TABS[state.tab];
+  document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-selected", b.dataset.tab===state.tab));
+  for(const k in TABS){ const n=state.items.filter(i=>i.kind===k && !i.done && (k!=="plan" || (i.date||"9999")>=today())).length; $("#n-"+k).textContent=n?n:""; }
+  $("#primary").textContent=tw.primary;
+  $("#secondary").hidden = state.tab==="plan";
+  $("#filters").innerHTML=tw.filters.map((f,ix)=>`<button class="chip" aria-pressed="${ix===state.filter}" data-f="${ix}">${f}</button>`).join("");
+  const next=state.items.filter(i=>i.kind==="plan"&&!i.done&&i.date&&i.date>=today()).sort((a,b)=>a.date.localeCompare(b.date))[0];
+  const nx=$("#next"); nx.hidden=!next; if(next) nx.innerHTML=`Next up<b>${esc(next.title)}</b>${esc(fmtDate(next.date,next.time))}`;
+  const L=$("#list");
+  if(state.err==="nokey"){ L.innerHTML=`<div class="empty"><b>Open your private link first</b>This site only shows your list when opened from the special link Lucas got. Open that link once on this phone and it'll be remembered.</div>`; return; }
+  if(state.err==="load"){ L.innerHTML=`<div class="empty"><b>Couldn't load your lists</b>Check your connection, then pull to refresh or reopen the page.</div>`; return; }
+  if(!state.ready){ L.innerHTML=`<div class="status"><span class="spin"></span>Loading your lists…</div>`; return; }
+  const xs=visible();
+  if(!xs.length){
+    const any=state.items.some(i=>i.kind===state.tab);
+    L.innerHTML = any ? `<div class="empty"><b>Nothing here</b>Try another filter above.</div>` : `<div class="empty"><b>${tw.empty[0]}</b>${tw.empty[1]}</div>`;
+    return;
+  }
+  L.innerHTML=xs.map(itemHTML).join("");
+}
+
+$("#filters").addEventListener("click",e=>{ const b=e.target.closest("[data-f]"); if(!b) return; state.filter=+b.dataset.f; render(); });
+
+$("#list").addEventListener("click", async e=>{
+  const d=e.target.closest(".desc.clamp"); if(d){ d.classList.remove("clamp"); return; }
+  const b=e.target.closest("[data-act]"); if(!b) return;
+  const it=state.items.find(i=>i.id===b.dataset.id); if(!it) return;
+  const act=b.dataset.act;
+  if(act==="toggle") patchItem(it,{done:!it.done});
+  if(act==="del"){
+    if(b.dataset.confirm) deleteItem(it);
+    else { b.dataset.confirm="1"; b.textContent="Tap again to remove"; setTimeout(()=>{ if(b.isConnected){ delete b.dataset.confirm; b.textContent="Remove"; } },3000); }
+  }
+  if(act==="plan") openPlan({title: it.kind==="watch" ? "Watch "+it.title : it.kind==="eat" ? "Dinner at "+it.title : it.title, notes: it.kind==="eat" ? [it.address, it.phone].filter(Boolean).join(" · ") : ""});
+  if(act==="edit") openPlan(it);
+});
+
+/* ---------- sheet ---------- */
+function openSheet(html){ $("#sheet").innerHTML=html; $("#scrim").hidden=false; document.body.style.overflow="hidden"; const f=$("#sheet").querySelector("input,textarea"); if(f && matchMedia("(min-width:760px)").matches) f.focus(); }
+function closeSheet(){ $("#scrim").hidden=true; $("#sheet").innerHTML=""; document.body.style.overflow=""; searchSeq++; }
+$("#scrim").addEventListener("click",e=>{ if(e.target.id==="scrim"||e.target.closest("[data-close]")) closeSheet(); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&!$("#scrim").hidden) closeSheet(); });
+const head = t => `<div class="row"><h2>${t}</h2><button class="btn plain" data-close>Close</button></div>`;
+
+$("#primary").addEventListener("click",()=>({watch:openWatchSearch, eat:openEatSearch, idea:openIdeas, plan:()=>openPlan({})})[state.tab]());
+$("#secondary").addEventListener("click",()=>openManual(state.tab));
+
+function resultsHTML(arr, fmt){
+  return arr.map((r,ix)=>{ const f=fmt(r); return `<div class="result${f.poster?" has-poster":""}">${f.poster||""}<div class="rb">
+    <div class="t">${esc(f.title)}</div>${f.meta.length?`<div class="meta">${f.meta.map(m=>`<span>${esc(m)}</span>`).join("")}</div>`:""}
+    ${f.desc?`<div class="desc">${esc(f.desc)}</div>`:""}
+    <div class="acts"><button data-add="${ix}">+ Add to list</button>${f.link||""}</div></div></div>`; }).join("");
+}
+function wireAdds(arr, toItem){
+  $("#results").onclick = async e=>{ const b=e.target.closest("[data-add]"); if(!b||b.disabled) return; b.disabled=true;
+    if(await addItem(toItem(arr[+b.dataset.add]))) b.textContent="Added ✓"; else b.disabled=false; };
+}
+let searchSeq=0;
+function searching(){ $("#results").innerHTML=`<div class="status"><span class="spin"></span>Searching…</div>`; return ++searchSeq; }
+
+/* ---------- movies & TV: Apple iTunes (movies) + TVmaze (TV), no keys ---------- */
+function jsonp(url){
+  return new Promise((resolve,reject)=>{
+    const cb="pk_cb_"+Math.random().toString(36).slice(2);
+    const s=document.createElement("script");
+    const done=()=>{ delete window[cb]; s.remove(); clearTimeout(t); };
+    const t=setTimeout(()=>{ done(); reject(new Error("timeout")); },10000);
+    window[cb]=d=>{ done(); resolve(d); };
+    s.onerror=()=>{ done(); reject(new Error("load")); };
+    s.src=url+(url.includes("?")?"&":"?")+"callback="+cb;
+    document.head.appendChild(s);
+  });
+}
+const strip = h => { const d=document.createElement("div"); d.innerHTML=String(h||"").replace(/<[^>]*>/g," "); return d.textContent.replace(/\s+/g," ").trim(); };
+async function searchMovies(q){
+  const d = await jsonp(`https://itunes.apple.com/search?media=movie&entity=movie&country=dk&limit=8&term=${encodeURIComponent(q)}`);
+  return (d.results||[]).map(r=>({
+    title:r.trackName, type:"movie", year:(r.releaseDate||"").slice(0,4), genre:r.primaryGenreName||"",
+    length: r.trackTimeMillis ? Math.floor(r.trackTimeMillis/3600000)+"h "+Math.round(r.trackTimeMillis/60000%60)+"m" : "",
+    overview: r.longDescription||r.shortDescription||"", people: r.artistName ? "Directed by "+r.artistName : "",
+    poster: r.artworkUrl100 ? r.artworkUrl100.replace(/\/\d+x\d+bb\./,"/400x600bb.") : ""
+  }));
+}
+async function searchTV(q){
+  const res = await fetch(`https://api.tvmaze.com/search/shows?q=${encodeURIComponent(q)}`);
+  if(!res.ok) throw new Error("tv");
+  const d = await res.json();
+  return d.slice(0,8).map(({show:s})=>({
+    title:s.name, type:"tv", year:(s.premiered||"").slice(0,4)+(s.ended?"–"+s.ended.slice(0,4):(s.status==="Running"?"–":"")),
+    genre:(s.genres||[]).slice(0,2).join(", "), length: s.network?.name || s.webChannel?.name || "",
+    overview: strip(s.summary), people:"", poster: s.image ? (s.image.original||s.image.medium).replace(/^http:/,"https:") : ""
+  }));
+}
+function openWatchSearch(){
+  openSheet(`${head("Search movies & TV")}
+    <form id="sf" class="bar"><input class="grow" id="sq" placeholder="Movie or show title" autocomplete="off" enterkeyhint="search"><button class="btn">Search</button></form>
+    <div class="seg" id="wt"><button type="button" class="chip" aria-pressed="true" data-w="all">Both</button><button type="button" class="chip" aria-pressed="false" data-w="movie">Movies</button><button type="button" class="chip" aria-pressed="false" data-w="tv">TV shows</button></div>
+    <div class="list" id="results"></div>`);
+  let which="all";
+  $("#wt").onclick=e=>{ const b=e.target.closest("[data-w]"); if(!b) return; which=b.dataset.w; $("#wt").querySelectorAll(".chip").forEach(c=>c.setAttribute("aria-pressed",c===b)); if($("#sq").value.trim()) $("#sf").requestSubmit(); };
+  $("#sf").addEventListener("submit",async e=>{ e.preventDefault(); const q=$("#sq").value.trim(); if(!q) return; $("#sq").blur();
+    const seq=searching();
+    const [m,t]=await Promise.allSettled([which!=="tv"?searchMovies(q):Promise.resolve([]), which!=="movie"?searchTV(q):Promise.resolve([])]);
+    if(seq!==searchSeq) return;
+    const mv=m.status==="fulfilled"?m.value:[], tv=t.status==="fulfilled"?t.value:[];
+    const arr=[]; for(let i=0;i<Math.max(mv.length,tv.length);i++){ if(tv[i]) arr.push(tv[i]); if(mv[i]) arr.push(mv[i]); }
+    if(!arr.length){ $("#results").innerHTML=`<p class="status">${m.status==="rejected"&&t.status==="rejected"?"Search isn't reachable right now. Try again in a bit, or add it by hand.":"No matches. Check the spelling or add it by hand."}</p>`; return; }
+    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.title, meta:[r.type==="tv"?"TV":"Movie",r.year,r.genre,r.length].filter(Boolean), desc:[r.overview,r.people].filter(Boolean).join(" ").slice(0,260), poster:posterHTML(r.title,r.year,r.type,r.poster)}));
+    wireAdds(arr,r=>({kind:"watch",title:r.title,type:r.type,year:r.year,genre:r.genre,length:r.length,overview:r.overview.slice(0,600),poster:r.poster}));
+  });
+}
+
+/* ---------- restaurants: OpenStreetMap via Overpass, no keys ---------- */
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\"]/g,"\\$&");
+async function searchPlaces(q){
+  const r = reEsc(q);
+  const query = `[out:json][timeout:20];(nwr["amenity"~"^(restaurant|cafe|bar|pub|fast_food|ice_cream)$"]["name"~"${r}",i](${CPH_BBOX});nwr["amenity"~"^(restaurant|cafe|bar)$"]["cuisine"~"${r}",i](${CPH_BBOX}););out center tags 40;`;
+  const res = await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:"data="+encodeURIComponent(query),headers:{"Content-Type":"application/x-www-form-urlencoded"}});
+  if(!res.ok) throw new Error("osm");
+  const d = await res.json();
+  const seen=new Set();
+  return (d.elements||[]).filter(e=>e.tags&&e.tags.name).map(e=>{ const t=e.tags;
+    const cuisine=(t.cuisine||"").split(";").map(c=>c.replace(/_/g," ")).filter(Boolean).slice(0,3).join(", ");
+    const kind={cafe:"Café",bar:"Bar",pub:"Pub",fast_food:"Fast food",ice_cream:"Ice cream"}[t.amenity];
+    return { name:t.name, cuisine:[kind,cuisine].filter(Boolean).join(" · ") || "Restaurant",
+      address:[ [t["addr:street"],t["addr:housenumber"]].filter(Boolean).join(" "), t["addr:postcode"] ].filter(Boolean).join(", "),
+      area: t["addr:city"] && t["addr:city"]!=="København" ? t["addr:city"] : "",
+      hours:t.opening_hours||"", website:t.website||t["contact:website"]||"", phone:t.phone||t["contact:phone"]||"",
+      lat:e.lat||e.center?.lat, lon:e.lon||e.center?.lon };
+  }).filter(p=>{ const k=p.name+"|"+p.address; if(seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a,b)=>(b.name.toLowerCase().includes(q.toLowerCase()))-(a.name.toLowerCase().includes(q.toLowerCase()))).slice(0,20);
+}
+function openEatSearch(){
+  openSheet(`${head("Find a restaurant")}
+    <form id="sf" class="bar"><input class="grow" id="sq" placeholder="Name or cuisine, e.g. “Barr” or “ramen”" autocomplete="off" enterkeyhint="search"><button class="btn">Search</button></form>
+    <p class="note">Searches Copenhagen on OpenStreetMap. Use “Map &amp; reviews” for photos and ratings.</p>
+    <div class="list" id="results"></div>`);
+  $("#sf").addEventListener("submit",async e=>{ e.preventDefault(); const q=$("#sq").value.trim(); if(!q) return; $("#sq").blur();
+    const seq=searching();
+    let arr; try{ arr=await searchPlaces(q); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Restaurant search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
+    if(seq!==searchSeq) return;
+    if(!arr.length){ $("#results").innerHTML=`<p class="status">No matches in Copenhagen. Try a shorter name or another cuisine word (in English, like “sushi” or “italian”).</p>`; return; }
+    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[r.cuisine,r.area].filter(Boolean), desc:[r.address, r.hours?("Open "+r.hours):""].filter(Boolean).join(" · "),
+      link:`<a href="${mapLink({title:r.name,address:r.address})}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
+    wireAdds(arr,r=>({kind:"eat",title:r.name,cuisine:r.cuisine,area:r.area,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon}));
+  });
+}
+
+/* ---------- date ideas: built-in Copenhagen list ---------- */
+const IDEAS = [
+  ["Sunset at Islands Brygge","Bring wine and snacks to the harbour steps and watch the light go down. In summer, jump in the harbour bath first.","Free","Evening"],
+  ["Tivoli after dark","Go in the evening when the lights are on. Ride the old wooden roller coaster, Rutschebanen.","Mid","Evening"],
+  ["Paper Island street food","Eat your way around Reffen street food market and catch the sunset by the water.","Cheap","Evening"],
+  ["GoBoat on the canals","Rent a solar boat for two hours, bring a picnic, and steer yourselves through Christianshavn.","Mid","Weekend daytime"],
+  ["Louisiana Museum day trip","Train up the coast to Humlebæk. Art, sculpture garden and a view across to Sweden.","Mid","Weekend daytime"],
+  ["Cinema at Grand Teatret","Pick a film neither of you knows at the old Grand cinema, then go for a drink after.","Mid","Evening"],
+  ["Copenhill ski or hike","Ski down the roof of the power plant at CopenHill, or walk to the top for the view.","Mid","Weekend daytime"],
+  ["Bike to Amager Strand","Cycle out to the beach. Swim if you're brave, or walk the lagoon and grab a coffee.","Free","Weekend daytime"],
+  ["Cook a new cuisine together","Pick a country neither of you has cooked from, shop for it at Torvehallerne and cook at home.","Cheap","Evening"],
+  ["Jazz at La Fontaine","Late-night jazz in a tiny, old bar in the centre. Go after 22:00.","Cheap","Late night"],
+  ["Deer Park walk","Take the train to Klampenborg and walk among the deer in Dyrehaven. End at Bakken or the beach.","Free","Weekend daytime"],
+  ["Rooftop at Rundetaarn","Walk up the spiral ramp of the Round Tower for a view over the old city rooftops.","Cheap","Daytime"],
+  ["Board game café","Spend an evening at a board game café and find a game that becomes yours.","Cheap","Evening"],
+  ["Sauna and cold dip","Book a harbour sauna (like CopenHot or La Banchina) and take turns with the cold water.","Mid","Any time"],
+  ["Assistens Cemetery picnic","Locals use this beautiful old cemetery in Nørrebro as a park. Bring a blanket and a book each.","Free","Weekend daytime"],
+  ["Wine bar crawl in Vesterbro","Try three natural wine bars around Værnedamsvej and Istedgade, one glass each.","Mid","Evening"],
+  ["Day trip to Malmö","20 minutes on the train across the bridge. Walk the old town and eat at the Saluhall.","Mid","Weekend daytime"],
+  ["Pottery or painting class","Book a beginner workshop and make something terrible together.","Mid","Evening"],
+  ["Christmas market and gløgg","In December, walk through Tivoli and Nyhavn's markets with gløgg and æbleskiver.","Cheap","Evening"],
+  ["Botanical Garden & Palm House","Warm up inside the old glass Palm House on a grey day, then get cake nearby.","Free","Daytime"],
+  ["Karaoke night","Rent a private karaoke room and sing one song you'd never sing in public.","Mid","Late night"],
+  ["Breakfast in bed, no phones","Make a proper slow breakfast and keep the phones in another room until noon.","Cheap","Weekend morning"],
+  ["Bakery tour","Hit three bakeries in one morning and rank the cinnamon buns.","Cheap","Weekend morning"],
+  ["Stargazing at the coast","Drive or bike somewhere dark like Dragør on a clear night with blankets and tea.","Free","Late night"],
+  ["Kayak the harbour","Rent kayaks and paddle the harbour and canals, with a stop for ice cream.","Mid","Summer daytime"],
+  ["Recreate your first date","Go back to where it started, and order the same things if you can remember them.","Mid","Any time"],
+];
+function openIdeas(){
+  const have=new Set(state.items.filter(i=>i.kind==="idea").map(i=>i.title));
+  const pool=IDEAS.filter(x=>!have.has(x[0])).sort(()=>Math.random()-.5).slice(0,6);
+  openSheet(`${head("Date ideas")}<div class="list" id="results"></div>
+    <div class="bar"><button class="btn ghost" id="more">Show others</button></div>`);
+  if(!pool.length){ $("#results").innerHTML=`<p class="status">You've added every idea on the list. Time to come up with your own!</p>`; $("#more").hidden=true; return; }
+  const arr=pool.map(([title,notes,cost,when])=>({title,notes,cost,when}));
+  $("#results").innerHTML=resultsHTML(arr,r=>({title:r.title, meta:[r.cost,r.when], desc:r.notes}));
+  wireAdds(arr,r=>({kind:"idea",...r}));
+  $("#more").onclick=openIdeas;
+}
+
+/* ---------- manual add ---------- */
+function openManual(kind){
+  const extra = {
+    watch:`<div class="grid2"><label class="f">Type<select id="m-type"><option value="movie">Movie</option><option value="tv">TV show</option></select></label><label class="f">Year<input id="m-year" inputmode="numeric"></label></div><label class="f">Note<textarea id="m-notes"></textarea></label>`,
+    eat:`<div class="grid2"><label class="f">Cuisine<input id="m-cuisine"></label><label class="f">Address or area<input id="m-address" placeholder="e.g. Vesterbro"></label></div><label class="f">Note<textarea id="m-notes"></textarea></label>`,
+    idea:`<label class="f">Details<textarea id="m-notes"></textarea></label>`
+  }[kind];
+  openSheet(`${head({watch:"Add a movie or show",eat:"Add a restaurant",idea:"Add a date idea"}[kind])}
+    <form id="mf" style="display:flex;flex-direction:column;gap:10px"><label class="f">${kind==="eat"?"Name":"Title"}<input id="m-title" required></label>${extra}<button class="btn">Add to list</button></form>`);
+  $("#mf").addEventListener("submit",async e=>{ e.preventDefault();
+    const v=id=>{ const el=$("#"+id); return el?el.value.trim():""; };
+    const title=v("m-title"); if(!title) return;
+    const d={kind,title};
+    if(kind==="watch"){ d.type=v("m-type"); d.year=v("m-year"); d.note=v("m-notes"); }
+    if(kind==="eat"){ d.cuisine=v("m-cuisine"); d.address=v("m-address"); d.note=v("m-notes"); }
+    if(kind==="idea"){ d.notes=v("m-notes"); }
+    if(await addItem(d)) closeSheet();
+  });
+}
+
+/* ---------- plans ---------- */
+function openPlan(p){
+  const editing=!!p.id;
+  openSheet(`${head(editing?"Edit plan":"Add a plan")}
+    <form id="pf" style="display:flex;flex-direction:column;gap:10px">
+      <label class="f">What<input id="p-title" required value="${esc(p.title||"")}"></label>
+      <div class="grid2"><label class="f">Date<input id="p-date" type="date" value="${esc(p.date||"")}"></label><label class="f">Time<input id="p-time" type="time" value="${esc(p.time||"")}"></label></div>
+      <label class="f">Notes<textarea id="p-notes" placeholder="Tickets booked? Table for 19:30?">${esc(p.notes||"")}</textarea></label>
+      <button class="btn">${editing?"Save":"Add plan"}</button></form>`);
+  $("#pf").addEventListener("submit",async e=>{ e.preventDefault();
+    const d={title:$("#p-title").value.trim(), date:$("#p-date").value, time:$("#p-time").value, notes:$("#p-notes").value.trim()};
+    if(!d.title) return;
+    const ok = editing ? await patchItem(p,d) : await addItem({kind:"plan",...d});
+    if(ok){ closeSheet(); if(editing) toast("Saved"); }
+  });
+}
+
+/* ---------- boot ---------- */
+render();
+load();
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) load(); });
+setInterval(()=>{ if(!document.hidden && $("#scrim").hidden) load(); },30000);
+</script>
+</body>
+</html>
