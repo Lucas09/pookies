@@ -474,9 +474,84 @@ function openPlan(p){
   });
 }
 
+/* ---------- starter list (imported once into an empty database) ---------- */
+const SEED_TAG = "seed-v1";
+const W = (title,type,o={}) => ({kind:"watch",title,type,lookup:true,...o});
+const SEED = [
+  // Serier
+  W("Star Wars: The Clone Wars","tv"), W("Shrinking","tv",{done:true,note:"💚 9/10"}), W("Schitt's Creek","tv",{note:"🍌"}),
+  W("Silicon Valley","tv",{note:"?"}), W("Ted Lasso","tv",{done:true,note:"🪀 9/10"}), W("House of the Dragon","tv"), W("Ahsoka","tv"),
+  W("The White Lotus","tv"), W("Love on the Spectrum","tv",{note:"fordi vi begge er nogle cute, weird, små autister"}), W("Nobody Wants This","tv"),
+  W("MasterChef","tv"), W("True Detective","tv",{note:"Sæson 1"}), W("The Traitors","tv",{note:"Nyeste US sæson",q:"The Traitors US"}),
+  W("The Girlfriend","tv",{note:"Prime"}), W("Fallout","tv"), W("The Pitt","tv"), W("A Knight of the Seven Kingdoms","tv"),
+  // Film
+  W("Alle Star Wars","movie",{note:"duh",lookup:false}), W("X-Men filmene","movie",{lookup:false}), W("Frankenstein","movie",{y:"2025"}),
+  W("Harry Potter","movie",{note:"Alle filmene",lookup:false}), W("Hercules","movie",{y:"1997"}), W("Strange World","movie",{done:true,note:"💚 6/10",y:"2022"}),
+  W("Sinbad: Legend of the Seven Seas","movie",{y:"2003"}), W("The Road to El Dorado","movie",{y:"2000"}), W("Kill Bill: Vol. 1","movie",{y:"2003"}),
+  W("Eternity","movie",{done:true,note:"🦎 8/10",y:"2025"}), W("The Rip","movie",{note:"Ny film med Matt Damon og Ben Affleck",y:"2026"}),
+  W("The Gorge","movie",{done:true,note:"🪀 6.7/10",y:"2025"}), W("We Live in Time","movie",{y:"2024"}), W("Inside Out","movie",{y:"2015"}),
+  W("Wreck-It Ralph","movie",{y:"2012"}), W("Barbie","movie",{note:"!!!!",y:"2023"}), W("Top Secret!","movie",{note:"Meget Lucas-humor",y:"1984"}),
+  W("Primal Fear","movie",{note:"Gammel film",y:"1996"}), W("Shutter Island","movie",{note:"Gammel film",y:"2010"}),
+  // Date ideer
+  ...[["Spille Scrabble"],["Lære Lucas at spille backgammon"],["Tage på museum","Listen er lang, så Lucas må bestemme hvor hihi"],["Gå tur op til Flere Fugle"],
+    ["Supermarco og lækker italiensk mad","Handle i Supermarco og lave lækker italiensk mad sammen"],["Bowle","Obvi"],["Studio Arhøj photobooth","Tage i Studio Arhøj og tage billeder i deres photobooth"],
+    ["Lucas lærer Caro at lave en hjemmeside","Hvordan han lavede valentine/piggy-hjemmesiden (hvis han har masser af overskud en dag)"],["Genbrugsbutik sammen","Lucas giver Caro lov til at gå i en genbrugsbutik sammen"],
+    ["Bage en banankage Caro kan lide","Hint: der skal nok MEGET chokolade i"],["Lave risotto sammen","Med svampe, ærter og citronskal, eller butternut squash"]]
+    .map(([title,notes])=>({kind:"idea",title,notes:notes||""})),
+  // Restauranter (Nørrebro edition)
+  ...[["Osteria 16"],["Ma Cuisine"],["Diamond Slice"],["Ramen to Biiru","Igen ja"],["Slurp"],["Baka d'Busk","Hvis Lucas føler for at spise kaninføde en dag"],["Graziano"],
+    ["Bafi","🥐"],["Pastaria","Imens vi drikker øl i solen på Kølsters"],["Mirabelle / BÆST"],["Paloma Vermuteria","🥃"],["Omar","🍷"],["Bonni Café","🥐"],
+    ["Buzio Taberna","🍷"],["Restaurant Calma"],["Friheden","🥐"],["Juma","🇮🇳🥘",""," Ryesgade"],["Kani","🥐","Vesterbro"],["Safari","Italiensk 🍅"]]
+    .map(([title,note,area,addr])=>({kind:"eat",title,note:note||"",area:area||(addr?"Østerbro":"Nørrebro"),address:addr?addr.trim():""})),
+];
+async function seedIfNeeded(){
+  if(state.items.some(i=>i.kind==="meta" && i.title===SEED_TAG)) return false;
+  try{
+    const marks = await api(`items?select=id&kind=eq.meta&title=eq.${SEED_TAG}`);
+    if(marks.length) return false;
+    await api("items",{method:"POST",body:JSON.stringify({kind:"meta",title:SEED_TAG,done:true,data:{}})});
+    const now=Date.now();
+    const have=new Set(state.items.map(i=>i.kind+"|"+i.title.toLowerCase()));
+    const rows = SEED.filter(d=>!have.has(d.kind+"|"+d.title.toLowerCase())).reverse().map((d,ix)=>{ const {done=false,...rest}=d; return {...split({...rest,done}), created_at:new Date(now+ix*1000).toISOString()}; });
+    await api("items",{method:"POST",body:JSON.stringify(rows)});
+    return true;
+  }catch(e){ return false; }
+}
+
+/* ---------- fill in posters and info for titles added without them ---------- */
+let enriching=false;
+async function lookupOne(it){
+  const q = it.q || it.title;
+  if(it.type==="tv"){
+    const r = await fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(q)}`);
+    if(!r.ok) return null;
+    const s = await r.json();
+    return { year:(s.premiered||"").slice(0,4)+(s.ended?"–"+s.ended.slice(0,4):(s.status==="Running"?"–":"")), genre:(s.genres||[]).slice(0,2).join(", "),
+      length:s.network?.name||s.webChannel?.name||"", overview:strip(s.summary).slice(0,600), poster:s.image?(s.image.original||s.image.medium).replace(/^http:/,"https:"):"" };
+  }
+  const xs = await searchMovies(q);
+  const m = xs.find(x=>it.y && x.year===it.y) || (it.y ? xs.find(x=>Math.abs(+x.year - +it.y)<=1) : xs[0]);
+  if(!m) return null;
+  return { year:m.year, genre:m.genre, length:m.length, overview:m.overview.slice(0,600), poster:m.poster };
+}
+async function enrich(){
+  if(enriching) return; enriching=true;
+  try{
+    for(const it of state.items.filter(i=>i.kind==="watch" && i.lookup && !i.looked)){
+      let info=null; try{ info=await lookupOne(it); }catch(e){}
+      const cur=state.items.find(i=>i.id===it.id); if(!cur) continue;
+      const next={...cur, ...(info||{}), looked:true};
+      state.items=state.items.map(i=>i.id===it.id?next:i);
+      try{ await api("items?id=eq."+encodeURIComponent(it.id),{method:"PATCH",body:JSON.stringify(split(next))}); }catch(e){}
+      render();
+      await new Promise(r=>setTimeout(r,350));
+    }
+  } finally { enriching=false; }
+}
+
 /* ---------- boot ---------- */
 render();
-load();
+load().then(async()=>{ if(state.ready && await seedIfNeeded()) await load(); if(state.ready) enrich(); });
 document.addEventListener("visibilitychange",()=>{ if(!document.hidden) load(); });
 setInterval(()=>{ if(!document.hidden && $("#scrim").hidden) load(); },30000);
 </script>
