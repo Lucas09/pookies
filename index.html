@@ -188,7 +188,9 @@ async function addItem(d){
   try{
     const [row] = await api("items",{method:"POST", body:JSON.stringify({...split({...d, done:false})})});
     state.items.unshift(flat(row)); render();
-    toast("Added to "+({watch:"Watch",eat:"Eat",idea:"Ideas",plan:"Plans"})[d.kind]); return true;
+    toast("Added to "+({watch:"Watch",eat:"Eat",idea:"Ideas",plan:"Plans"})[d.kind]);
+    if(d.kind==="watch" && d.lookup) setTimeout(enrich,0);
+    return true;
   }catch(e){ toast("Couldn't save. Check your connection and try again."); return false; }
 }
 async function patchItem(it, changes){
@@ -355,6 +357,30 @@ async function searchTV(q){
     overview: strip(s.summary), people:"", poster: s.image ? (s.image.original||s.image.medium).replace(/^http:/,"https:") : ""
   }));
 }
+
+/* ---------- TMDB (used when a key is set; covers almost every film and show) ---------- */
+const TMDB_KEY = "";
+const TMDB_IMG = "https://image.tmdb.org/t/p/w342";
+const TMDB_GENRES = {28:"Action",12:"Adventure",16:"Animation",35:"Comedy",80:"Crime",99:"Documentary",18:"Drama",10751:"Family",14:"Fantasy",36:"History",27:"Horror",10402:"Music",9648:"Mystery",10749:"Romance",878:"Sci-Fi",10770:"TV Movie",53:"Thriller",10752:"War",37:"Western",10759:"Action & Adventure",10762:"Kids",10763:"News",10764:"Reality",10765:"Sci-Fi & Fantasy",10766:"Soap",10767:"Talk",10768:"War & Politics"};
+async function tmdb(path, params={}){
+  const u=new URL("https://api.themoviedb.org/3/"+path);
+  u.searchParams.set("api_key",TMDB_KEY); u.searchParams.set("include_adult","false");
+  for(const k in params) if(params[k]) u.searchParams.set(k,params[k]);
+  const r=await fetch(u); if(!r.ok) throw new Error("tmdb "+r.status); return r.json();
+}
+function fromTmdb(r,type){
+  const tv = type==="tv";
+  const date = tv ? r.first_air_date : r.release_date;
+  return { title: tv ? r.name : r.title, type: tv?"tv":"movie", year:(date||"").slice(0,4),
+    genre:(r.genre_ids||[]).slice(0,2).map(g=>TMDB_GENRES[g]).filter(Boolean).join(", "), length:"",
+    overview:r.overview||"", people:"", poster:r.poster_path?TMDB_IMG+r.poster_path:"", tmdb:r.id };
+}
+async function tmdbSearch(q, which){
+  if(which==="movie") return (await tmdb("search/movie",{query:q})).results.slice(0,12).map(r=>fromTmdb(r,"movie"));
+  if(which==="tv") return (await tmdb("search/tv",{query:q})).results.slice(0,12).map(r=>fromTmdb(r,"tv"));
+  const d=await tmdb("search/multi",{query:q});
+  return d.results.filter(r=>r.media_type==="movie"||r.media_type==="tv").slice(0,12).map(r=>fromTmdb(r,r.media_type));
+}
 function openWatchSearch(){
   openSheet(`${head("Search movies & TV")}
     <form id="sf" class="bar"><input class="grow" id="sq" placeholder="Movie or show title" autocomplete="off" enterkeyhint="search"><button class="btn">Search</button></form>
@@ -364,15 +390,24 @@ function openWatchSearch(){
   $("#wt").onclick=e=>{ const b=e.target.closest("[data-w]"); if(!b) return; which=b.dataset.w; $("#wt").querySelectorAll(".chip").forEach(c=>c.setAttribute("aria-pressed",c===b)); if($("#sq").value.trim()) $("#sf").requestSubmit(); };
   $("#sf").addEventListener("submit",async e=>{ e.preventDefault(); const q=$("#sq").value.trim(); if(!q) return; $("#sq").blur();
     const seq=searching();
+    if(TMDB_KEY){
+      let arr; try{ arr=await tmdbSearch(q,which); }catch(err){ arr=null; }
+      if(seq!==searchSeq) return;
+      if(arr && arr.length){ showWatchResults(arr); return; }
+      if(arr){ $("#results").innerHTML=`<p class="status">No matches. Check the spelling or add it by hand.</p>`; return; }
+    }
     const [m,t]=await Promise.allSettled([which!=="tv"?searchMovies(q):Promise.resolve([]), which!=="movie"?searchTV(q):Promise.resolve([])]);
     if(seq!==searchSeq) return;
     const mv=m.status==="fulfilled"?m.value:[], tv=t.status==="fulfilled"?t.value:[];
     const arr=[]; for(let i=0;i<Math.max(mv.length,tv.length);i++){ if(tv[i]) arr.push(tv[i]); if(mv[i]) arr.push(mv[i]); }
     const ql=q.toLowerCase(); arr.sort((a,b)=>((b.title||"").toLowerCase()===ql)-((a.title||"").toLowerCase()===ql));
     if(!arr.length){ $("#results").innerHTML=`<p class="status">${m.status==="rejected"&&t.status==="rejected"?"Search isn't reachable right now. Try again in a bit, or add it by hand.":"No matches. Check the spelling or add it by hand."}</p>`; return; }
-    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.title, meta:[r.type==="tv"?"TV":"Movie",r.year,r.genre,r.length].filter(Boolean), desc:[r.overview,r.people].filter(Boolean).join(" ").slice(0,260), poster:posterHTML(r.title,r.year,r.type,r.poster)}));
-    wireAdds(arr,r=>({kind:"watch",title:r.title,type:r.type,year:r.year,genre:r.genre,length:r.length,overview:r.overview.slice(0,600),poster:r.poster}));
+    showWatchResults(arr);
   });
+}
+function showWatchResults(arr){
+  $("#results").innerHTML=resultsHTML(arr,r=>({title:r.title, meta:[r.type==="tv"?"TV":"Movie",r.year,r.genre,r.length].filter(Boolean), desc:[r.overview,r.people].filter(Boolean).join(" ").slice(0,260), poster:posterHTML(r.title,r.year,r.type,r.poster)}));
+  wireAdds(arr,r=>({kind:"watch",title:r.title,type:r.type,year:r.year,genre:r.genre,length:r.length,overview:(r.overview||"").slice(0,600),poster:r.poster,...(r.tmdb?{tmdb:r.tmdb}:{} )}));
 }
 
 /* ---------- restaurants: OpenStreetMap via Overpass, no keys ---------- */
@@ -465,7 +500,7 @@ function openManual(kind){
     const v=id=>{ const el=$("#"+id); return el?el.value.trim():""; };
     const title=v("m-title"); if(!title) return;
     const d={kind,title};
-    if(kind==="watch"){ d.type=v("m-type"); d.year=v("m-year"); d.note=v("m-notes"); }
+    if(kind==="watch"){ d.type=v("m-type"); d.year=v("m-year"); d.y=d.year; d.note=v("m-notes"); d.lookup=true; }
     if(kind==="eat"){ d.cuisine=v("m-cuisine"); d.address=v("m-address"); d.note=v("m-notes"); }
     if(kind==="idea"){ d.notes=v("m-notes"); }
     if(await addItem(d)) closeSheet();
@@ -537,6 +572,15 @@ async function seedIfNeeded(){
 let enriching=false;
 async function lookupOne(it){
   const q = it.q || it.title;
+  if(TMDB_KEY){
+    try{
+      const tv=it.type==="tv";
+      const d=await tmdb(tv?"search/tv":"search/movie",{query:it.title, [tv?"first_air_date_year":"year"]:it.y||""});
+      let r=d.results[0];
+      if(!r && it.y){ r=(await tmdb(tv?"search/tv":"search/movie",{query:it.title})).results[0]; }
+      if(r){ const x=fromTmdb(r,tv?"tv":"movie"); return {year:it.year||x.year, genre:x.genre||it.genre||"", overview:x.overview.slice(0,600)||it.overview||"", poster:x.poster, tmdb:x.tmdb}; }
+    }catch(e){}
+  }
   if(it.type==="tv"){
     const r = await fetch(`https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(q)}`);
     if(!r.ok) return null;
@@ -552,10 +596,10 @@ async function lookupOne(it){
 async function enrich(){
   if(enriching) return; enriching=true;
   try{
-    for(const it of state.items.filter(i=>i.kind==="watch" && i.lookup && (!i.looked || (!i.poster && !i.looked2)))){
+    for(const it of state.items.filter(i=>i.kind==="watch" && i.lookup && (!i.looked || (!i.poster && !i.looked2) || (TMDB_KEY && !i.poster && !i.lookedT)))){
       let info=null; try{ info=await lookupOne(it); }catch(e){}
       const cur=state.items.find(i=>i.id===it.id); if(!cur) continue;
-      const next={...cur, ...(info||{}), looked:true, looked2:true};
+      const next={...cur, ...(info||{}), looked:true, looked2:true, ...(TMDB_KEY?{lookedT:true}:{})};
       state.items=state.items.map(i=>i.id===it.id?next:i);
       try{ await api("items?id=eq."+encodeURIComponent(it.id),{method:"PATCH",body:JSON.stringify(split(next))}); }catch(e){}
       render();
