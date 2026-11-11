@@ -330,8 +330,15 @@ function jsonp(url){
 }
 const strip = h => { const d=document.createElement("div"); d.innerHTML=String(h||"").replace(/<[^>]*>/g," "); return d.textContent.replace(/\s+/g," ").trim(); };
 async function searchMovies(q){
-  const d = await jsonp(`https://itunes.apple.com/search?media=movie&entity=movie&country=dk&limit=8&term=${encodeURIComponent(q)}`);
-  return (d.results||[]).map(r=>({
+  // Look in both the Danish and US stores (new films often reach one first), take many results, then rank.
+  const urls=["dk","us"].map(c=>`https://itunes.apple.com/search?media=movie&entity=movie&country=${c}&limit=50&term=${encodeURIComponent(q)}`);
+  const got=await Promise.allSettled(urls.map(jsonp));
+  if(got.every(g=>g.status==="rejected")) throw new Error("itunes");
+  const seen=new Set(), all=[];
+  for(const g of got) if(g.status==="fulfilled") for(const r of (g.value.results||[])){ const k=(r.trackName||"").toLowerCase()+"|"+(r.releaseDate||"").slice(0,4); if(!seen.has(k)){ seen.add(k); all.push(r); } }
+  const ql=q.toLowerCase().trim(), score=r=>{ const t=(r.trackName||"").toLowerCase(); return t===ql?3 : t.startsWith(ql)?2 : t.includes(ql)?1 : 0; };
+  all.sort((a,b)=>score(b)-score(a) || (b.releaseDate||"").localeCompare(a.releaseDate||""));
+  return all.slice(0,10).map(r=>({
     title:r.trackName, type:"movie", year:(r.releaseDate||"").slice(0,4), genre:r.primaryGenreName||"",
     length: r.trackTimeMillis ? Math.floor(r.trackTimeMillis/3600000)+"h "+Math.round(r.trackTimeMillis/60000%60)+"m" : "",
     overview: r.longDescription||r.shortDescription||"", people: r.artistName ? "Directed by "+r.artistName : "",
@@ -361,6 +368,7 @@ function openWatchSearch(){
     if(seq!==searchSeq) return;
     const mv=m.status==="fulfilled"?m.value:[], tv=t.status==="fulfilled"?t.value:[];
     const arr=[]; for(let i=0;i<Math.max(mv.length,tv.length);i++){ if(tv[i]) arr.push(tv[i]); if(mv[i]) arr.push(mv[i]); }
+    const ql=q.toLowerCase(); arr.sort((a,b)=>((b.title||"").toLowerCase()===ql)-((a.title||"").toLowerCase()===ql));
     if(!arr.length){ $("#results").innerHTML=`<p class="status">${m.status==="rejected"&&t.status==="rejected"?"Search isn't reachable right now. Try again in a bit, or add it by hand.":"No matches. Check the spelling or add it by hand."}</p>`; return; }
     $("#results").innerHTML=resultsHTML(arr,r=>({title:r.title, meta:[r.type==="tv"?"TV":"Movie",r.year,r.genre,r.length].filter(Boolean), desc:[r.overview,r.people].filter(Boolean).join(" ").slice(0,260), poster:posterHTML(r.title,r.year,r.type,r.poster)}));
     wireAdds(arr,r=>({kind:"watch",title:r.title,type:r.type,year:r.year,genre:r.genre,length:r.length,overview:r.overview.slice(0,600),poster:r.poster}));
@@ -544,10 +552,10 @@ async function lookupOne(it){
 async function enrich(){
   if(enriching) return; enriching=true;
   try{
-    for(const it of state.items.filter(i=>i.kind==="watch" && i.lookup && !i.looked)){
+    for(const it of state.items.filter(i=>i.kind==="watch" && i.lookup && (!i.looked || (!i.poster && !i.looked2)))){
       let info=null; try{ info=await lookupOne(it); }catch(e){}
       const cur=state.items.find(i=>i.id===it.id); if(!cur) continue;
-      const next={...cur, ...(info||{}), looked:true};
+      const next={...cur, ...(info||{}), looked:true, looked2:true};
       state.items=state.items.map(i=>i.id===it.id?next:i);
       try{ await api("items?id=eq."+encodeURIComponent(it.id),{method:"PATCH",body:JSON.stringify(split(next))}); }catch(e){}
       render();
