@@ -273,7 +273,7 @@ function posterHTML(title,year,type,src,badge){
   if(!src) return gen;
   return `<div class="poster" data-gen="${esc(gen)}" data-big="${esc(bigPoster(src))}" role="button" tabindex="0" aria-label="Show poster bigger"><img src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.outerHTML=this.parentNode.dataset.gen" >${badge?`<span class="avg">${esc(badge)}</span>`:""}</div>`;
 }
-function mapLink(i){ return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(i.title+" "+(i.address||"")+" København")}`; }
+function mapLink(i){ if(i.gmaps) return i.gmaps; return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(i.title+" "+(i.address||"")+" København")}`; }
 
 function itemHTML(i){
   if(i.kind==="trip") return tripHTML(i);
@@ -281,7 +281,7 @@ function itemHTML(i){
   const tw=TABS[i.kind];
   let meta=[], desc="", links="";
   if(i.kind==="watch"){ meta=[i.type==="tv"?"TV":"Movie", i.year, i.genre, i.length].filter(Boolean); desc=i.overview; }
-  if(i.kind==="eat"){ meta=[i.cuisine, i.area].filter(Boolean); desc=i.address||"";
+  if(i.kind==="eat"){ meta=[i.cuisine, i.area, starText(i)].filter(Boolean); desc=i.address||"";
     links=`<a href="${mapLink(i)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}`; }
   if(i.kind==="idea"){ meta=[i.cost, i.when].filter(Boolean); desc=i.notes; }
   if(i.kind==="plan"){ desc=i.notes; }
@@ -548,17 +548,18 @@ async function searchPlaces(q){
 function openEatSearch(){
   openSheet(`${head("Find a restaurant")}
     <form id="sf" class="bar"><input class="grow" id="sq" placeholder="Name or cuisine, e.g. “Barr” or “ramen”" autocomplete="off" enterkeyhint="search"><button class="btn">Search</button></form>
-    <p class="note">Searches Copenhagen on OpenStreetMap. Use “Map &amp; reviews” for photos and ratings.</p>
+    <p class="note" id="srcnote">${srcNote()}</p>
     <div class="list" id="results"></div>`);
   $("#sf").addEventListener("submit",async e=>{ e.preventDefault(); const q=$("#sq").value.trim(); if(!q) return; $("#sq").blur();
     const seq=searching();
-    let arr; try{ arr=await searchPlaces(q); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Restaurant search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
+    let arr; try{ arr=await withGoogle(q,55.675,12.56,12000,"eat",()=>searchPlaces(q)); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Restaurant search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
     if(seq!==searchSeq) return;
     if(!arr.length){ $("#results").innerHTML=`<p class="status">Couldn't find “${esc(q)}” on the map in Copenhagen. Small places are sometimes missing, so you can add it yourself.</p><div class="bar"><button class="btn" id="byhand">Add “${esc(q)}” by hand</button></div>`; $("#byhand").onclick=()=>openManual("eat",q); return; }
-    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[r.cuisine,r.area].filter(Boolean), desc:r.address||"",
-      link:`<a href="${mapLink({title:r.name,address:r.address})}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
-    wireAdds(arr,r=>({kind:"eat",title:r.name,cuisine:r.cuisine,area:r.area,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon}));
+    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[r.cuisine,r.area,starText(r)].filter(Boolean), desc:r.address||"",
+      link:`<a href="${esc(mapLink({title:r.name,address:r.address,gmaps:r.gmaps}))}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
+    wireAdds(arr,r=>({kind:"eat",title:r.name,cuisine:r.cuisine,area:r.area,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon,gmaps:r.gmaps,rating:r.rating,ratingCount:r.ratingCount}));
   });
+  wireKeyLink();
 }
 
 /* ---------- date ideas: built-in Copenhagen list ---------- */
@@ -622,11 +623,71 @@ function openManual(kind, prefill=""){
   });
 }
 
+/* ---------- Google Places (used first when a key is saved; OpenStreetMap is the backup) ----------
+   The key is saved in the database (a "meta" row), not in this public code, so both phones get it.
+   Only the fields shown here are requested. */
+const GKEY_TITLE="google-places";
+const googleKey = () => (state.items.find(i=>i.kind==="meta" && i.title===GKEY_TITLE)||{}).key || "";
+const G_FIELDS = "places.displayName,places.formattedAddress,places.shortFormattedAddress,places.location,places.types,places.primaryTypeDisplayName,places.googleMapsUri,places.websiteUri,places.regularOpeningHours.weekdayDescriptions,places.rating,places.userRatingCount";
+let lastSource="osm", googleProblem=false;
+const starText = r => r && typeof r.rating==="number" ? `★ ${r.rating.toFixed(1)}${r.ratingCount?` (${r.ratingCount.toLocaleString("en")})`:""}` : "";
+async function googleSearch(key, q, lat, lon, radius){
+  const r=await fetchT("https://places.googleapis.com/v1/places:searchText",{method:"POST",
+    headers:{"Content-Type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":G_FIELDS},
+    body:JSON.stringify({textQuery:q, pageSize:15, languageCode:"en", locationBias:{circle:{center:{latitude:lat,longitude:lon},radius:Math.min(radius,50000)}}})},10000);
+  if(!r.ok) throw new Error("google "+r.status);
+  return ((await r.json()).places||[]).map(p=>{ const t=p.types||[], tj=t.join(" ");
+    const food=/restaurant|food|cafe|coffee|bar|pub|bakery|meal|dessert|ice_cream|wine|brewery|pizza|sushi|steak|diner|bistro|tapas/.test(tj);
+    const cat= food ? "eat" : /lodging|hotel|hostel|inn|motel|bed_and_breakfast|resort|campground/.test(tj) ? "stay"
+      : /park|amusement|zoo|aquarium|beach|spa|stadium|theater|movie|night_club|bowling|gym|ski|hiking|marina|casino|concert|event|sports|garden/.test(tj) && !/tourist_attraction|museum|historical/.test(tj) ? "do" : "see";
+    const label=p.primaryTypeDisplayName?.text||"";
+    return { name:p.displayName?.text||"", food, cat, type:label, cuisine:label||"Restaurant", area:"",
+      address:p.shortFormattedAddress||p.formattedAddress||"", hours:(p.regularOpeningHours?.weekdayDescriptions||[]).join("; "),
+      website:p.websiteUri||"", phone:"", gmaps:p.googleMapsUri||"", rating:typeof p.rating==="number"?p.rating:null, ratingCount:p.userRatingCount||0,
+      lat:p.location?.latitude, lon:p.location?.longitude };
+  }).filter(p=>p.name);
+}
+async function withGoogle(q, lat, lon, radius, mode, osm){
+  const key=googleKey(); googleProblem=false;
+  if(key){
+    try{
+      let g=await googleSearch(key,q,lat,lon,radius);
+      if(mode==="eat"){ const f=g.filter(p=>p.food); if(f.length) g=f; }
+      if(g.length){ lastSource="google"; showSrc(); return g; }
+    }catch(e){ googleProblem=true; }
+  }
+  lastSource="osm"; const arr=await osm(); showSrc(); return arr;
+}
+function srcNote(){
+  const k=googleKey();
+  const src = lastSource==="google" ? "Results from Google Maps." : k ? "Searches Google Maps, with OpenStreetMap as backup." : "Searches OpenStreetMap.";
+  return `${googleProblem?"Google search didn't work (check the key), so these are from OpenStreetMap. ":src} <button type="button" class="btn plain" id="gk" style="padding:0;font-size:12.5px">${k?"Google key":"Use Google Maps instead"}</button>`;
+}
+function showSrc(){ const n=$("#srcnote"); if(n){ n.innerHTML=srcNote(); wireKeyLink(); } }
+function wireKeyLink(){ const b=$("#gk"); if(b) b.onclick=openGoogleKey; }
+function openGoogleKey(){
+  const cur=state.items.find(i=>i.kind==="meta" && i.title===GKEY_TITLE);
+  openSheet(`${head("Google Maps search")}
+    <p class="note">Paste the Google Places API key here once. It's saved with your lists, so it works on both phones.</p>
+    <form id="gkf" style="display:flex;flex-direction:column;gap:10px">
+      <label class="f">API key<input id="gk-in" autocomplete="off" spellcheck="false" placeholder="AIza…" value="${esc(cur?.key||"")}"></label>
+      <div class="bar"><button class="btn grow">Save</button>${cur?`<button type="button" class="btn plain" id="gk-del">Remove key</button>`:""}</div></form>`);
+  $("#gkf").addEventListener("submit",async e=>{ e.preventDefault(); const key=$("#gk-in").value.trim(); if(!key) return;
+    try{
+      if(cur){ await api("items?id=eq."+encodeURIComponent(cur.id),{method:"PATCH",body:JSON.stringify({data:{key}})}); cur.key=key; }
+      else { const [row]=await api("items",{method:"POST",body:JSON.stringify({kind:"meta",title:GKEY_TITLE,done:true,data:{key}})}); state.items.push(flat(row)); }
+      closeSheet(); toast("Google key saved");
+    }catch(err){ toast("Couldn't save the key. Try again."); }
+  });
+  if($("#gk-del")) $("#gk-del").onclick=async()=>{ try{ await api("items?id=eq."+encodeURIComponent(cur.id),{method:"DELETE"}); state.items=state.items.filter(i=>i!==cur); closeSheet(); toast("Key removed"); }catch(e){ toast("Couldn't remove. Try again."); } };
+}
+
 /* ---------- opening hours: hidden until you tap "Hours" ---------- */
 const DAYS={Mo:"Mon",Tu:"Tue",We:"Wed",Th:"Thu",Fr:"Fri",Sa:"Sat",Su:"Sun",PH:"Holidays"};
 const openHours=new Set();
 function fmtHours(h){
   return String(h).split(";").map(x=>x.trim()).filter(Boolean).map(x=>x
+    .replace(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*day:\s*/,"$1 ")
     .replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH)\b/g,d=>DAYS[d]).replace(/(\d)-(\d)/g,"$1–$2").replace(/,(?=\S)/g,", ").replace(/\boff\b/i,"closed"));
 }
 const hoursBtn = i => i.hours ? `<button data-act="hours" data-id="${esc(i.id)}" aria-expanded="${openHours.has(i.id)}">${openHours.has(i.id)?"Hide hours":"Hours"}</button>` : "";
@@ -681,7 +742,7 @@ function tripHTML(i){
 }
 function tripItemHTML(i){
   const trip=state.items.find(t=>t.id===i.trip)||{};
-  const meta=[i.type, i.area].filter(Boolean);
+  const meta=[i.type, i.area, starText(i)].filter(Boolean);
   const desc=i.address||"";
   return `<div class="item${i.done?" done":""}">
     <button class="tick" data-act="toggle" data-id="${esc(i.id)}" aria-label="${i.done?"Mark as not done":"Mark as done"}">${CHECK}</button>
@@ -690,7 +751,7 @@ function tripItemHTML(i){
       <div class="meta"><span class="cat">${esc(CATS[i.cat]||CATS.do)}</span>${meta.map(m=>`<span>${esc(m)}</span>`).join("")}</div>
       ${desc?`<div class="desc">${esc(desc)}</div>`:""}
       ${hoursHTML(i)}${noteHTML(i)}
-      <div class="acts"><a href="${placeLink(i.title, i.address||trip.title)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}${hoursBtn(i)}${noteBtn(i)}<button data-act="plan" data-id="${esc(i.id)}">Make it a plan</button><button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
+      <div class="acts"><a href="${esc(i.gmaps||placeLink(i.title, i.address||trip.title))}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}${hoursBtn(i)}${noteBtn(i)}<button data-act="plan" data-id="${esc(i.id)}">Make it a plan</button><button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
     </div></div>`;
 }
 function tripDetailHTML(trip){
@@ -781,7 +842,7 @@ function openTripSearch(trip){
   openSheet(`${head("Find places in "+esc(trip.title))}
     <form id="sf" class="bar"><input class="grow" id="sq" placeholder="Name, food or type, e.g. “pizza” or “museum”" autocomplete="off" enterkeyhint="search"><button class="btn">Search</button></form>
     <div class="bar"><button type="button" class="btn ghost" id="pop">Show popular sights</button></div>
-    <p class="note">Searches around ${esc(trip.title)} on OpenStreetMap. Use “Map &amp; reviews” for photos and ratings.</p>
+    <p class="note" id="srcnote">${srcNote()}</p>
     <div class="list" id="results"></div>`);
   const run=async q=>{
     const seq=searching();
@@ -791,15 +852,16 @@ function openTripSearch(trip){
       if(!g){ $("#results").innerHTML=`<p class="status">Couldn't find ${esc(trip.title)} on the map. Try editing the destination name (for example add the country), or add places by hand.</p>`; return; }
       Object.assign(trip,g); patchItem(state.items.find(i=>i.id===trip.id)||trip, g);
     }
-    let arr; try{ arr=await searchNear(trip,q); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Place search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
+    let arr; try{ arr=await withGoogle(q==null?"top tourist attractions in "+trip.title:q, trip.lat, trip.lon, Math.min(Math.max(trip.radius||6000,3000),20000), "trip", ()=>searchNear(trip,q)); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Place search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
     if(seq!==searchSeq) return;
     if(!arr.length){ $("#results").innerHTML = q==null ? `<p class="status">No well-known sights found near ${esc(trip.title)}. Try searching by name instead.</p>`
       : `<p class="status">Couldn't find “${esc(q)}” on the map near ${esc(trip.title)}. Small places are sometimes missing, so you can add it yourself.</p><div class="bar"><button class="btn" id="byhand">Add “${esc(q)}” by hand</button></div>`;
       if($("#byhand")) $("#byhand").onclick=()=>openTripManual(trip,q); return; }
-    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[CATS[r.cat],r.type].filter(Boolean), desc:r.address||"",
-      link:`<a href="${placeLink(r.name, r.address||trip.title)}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
-    wireAdds(arr,r=>({kind:"tripitem",trip:trip.id,title:r.name,cat:r.cat,type:r.type,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon}));
+    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[CATS[r.cat],r.type,starText(r)].filter(Boolean), desc:r.address||"",
+      link:`<a href="${esc(r.gmaps||placeLink(r.name, r.address||trip.title))}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
+    wireAdds(arr,r=>({kind:"tripitem",trip:trip.id,title:r.name,cat:r.cat,type:r.type,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon,gmaps:r.gmaps,rating:r.rating,ratingCount:r.ratingCount}));
   };
+  wireKeyLink();
   $("#sf").addEventListener("submit",e=>{ e.preventDefault(); const q=$("#sq").value.trim(); if(!q) return; $("#sq").blur(); run(q); });
   $("#pop").onclick=()=>run(null);
 }
