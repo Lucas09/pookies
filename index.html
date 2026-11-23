@@ -116,6 +116,7 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--mu
 .score small{font-size:20px;color:var(--muted)}
 input[type=range]{accent-color:var(--accent);padding:0;border:0;background:none}
 .who{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.hours{font-size:13.5px;color:var(--muted);font-variant-numeric:tabular-nums;background:#FFF0F5;border-radius:12px;padding:6px 10px}
 .pnote{font-size:14px;background:#FFF0F5;border:1px solid var(--line);border-radius:12px;padding:6px 10px;white-space:pre-wrap;overflow-wrap:anywhere;cursor:pointer}
 .t.link{cursor:pointer}
 .trip-head{background:var(--surface);border:1px solid var(--line);box-shadow:0 4px 16px rgba(214,51,132,.08);border-radius:var(--radius);padding:14px 16px;display:flex;flex-direction:column;gap:4px}
@@ -280,7 +281,7 @@ function itemHTML(i){
   const tw=TABS[i.kind];
   let meta=[], desc="", links="";
   if(i.kind==="watch"){ meta=[i.type==="tv"?"TV":"Movie", i.year, i.genre, i.length].filter(Boolean); desc=i.overview; }
-  if(i.kind==="eat"){ meta=[i.cuisine, i.area].filter(Boolean); desc=[i.address, i.hours?("Open "+i.hours):""].filter(Boolean).join(" · ");
+  if(i.kind==="eat"){ meta=[i.cuisine, i.area].filter(Boolean); desc=i.address||"";
     links=`<a href="${mapLink(i)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}`; }
   if(i.kind==="idea"){ meta=[i.cost, i.when].filter(Boolean); desc=i.notes; }
   if(i.kind==="plan"){ desc=i.notes; }
@@ -298,8 +299,8 @@ function itemHTML(i){
       ${meta.length?`<div class="meta">${meta.map(m=>`<span>${esc(m)}</span>`).join("")}</div>`:""}
       ${ratingRow}
       ${desc?`<div class="desc${i.kind==="watch"?" clamp":""}">${esc(desc)}</div>`:""}
-      ${i.kind==="eat"?noteHTML(i):""}
-      <div class="acts">${links}${i.kind==="eat"?noteBtn(i):""}${rateBtn}${planBtn}<button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
+      ${i.kind==="eat"?hoursHTML(i)+noteHTML(i):""}
+      <div class="acts">${links}${i.kind==="eat"?hoursBtn(i)+noteBtn(i):""}${rateBtn}${planBtn}<button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
     </div></div>`;
 }
 
@@ -348,6 +349,7 @@ $("#list").addEventListener("click", async e=>{
   if(act==="open"){ state.trip=it.id; state.cat=0; render(); window.scrollTo({top:0}); return; }
   if(act==="edittrip"){ openTripForm(it); return; }
   if(act==="note"){ openNote(it); return; }
+  if(act==="hours"){ openHours.has(it.id)?openHours.delete(it.id):openHours.add(it.id); render(); return; }
   if(act==="toggle"){ const nowDone=!it.done; await patchItem(it,{done:nowDone}); if(nowDone && it.kind==="watch") openRate(state.items.find(i=>i.id===it.id)||it); }
   if(act==="rate") openRate(it);
   if(act==="del"){
@@ -531,7 +533,7 @@ function openEatSearch(){
     let arr; try{ arr=await searchPlaces(q); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Restaurant search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
     if(seq!==searchSeq) return;
     if(!arr.length){ $("#results").innerHTML=`<p class="status">No matches in Copenhagen. Try a shorter name or another cuisine word (in English, like “sushi” or “italian”).</p>`; return; }
-    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[r.cuisine,r.area].filter(Boolean), desc:[r.address, r.hours?("Open "+r.hours):""].filter(Boolean).join(" · "),
+    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[r.cuisine,r.area].filter(Boolean), desc:r.address||"",
       link:`<a href="${mapLink({title:r.name,address:r.address})}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
     wireAdds(arr,r=>({kind:"eat",title:r.name,cuisine:r.cuisine,area:r.area,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon}));
   });
@@ -598,6 +600,16 @@ function openManual(kind){
   });
 }
 
+/* ---------- opening hours: hidden until you tap "Hours" ---------- */
+const DAYS={Mo:"Mon",Tu:"Tue",We:"Wed",Th:"Thu",Fr:"Fri",Sa:"Sat",Su:"Sun",PH:"Holidays"};
+const openHours=new Set();
+function fmtHours(h){
+  return String(h).split(";").map(x=>x.trim()).filter(Boolean).map(x=>x
+    .replace(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH)\b/g,d=>DAYS[d]).replace(/(\d)-(\d)/g,"$1–$2").replace(/,(?=\S)/g,", ").replace(/\boff\b/i,"closed"));
+}
+const hoursBtn = i => i.hours ? `<button data-act="hours" data-id="${esc(i.id)}" aria-expanded="${openHours.has(i.id)}">${openHours.has(i.id)?"Hide hours":"Hours"}</button>` : "";
+const hoursHTML = i => i.hours && openHours.has(i.id) ? `<div class="hours">${fmtHours(i.hours).map(l=>`<div>${esc(l)}</div>`).join("")}</div>` : "";
+
 /* ---------- notes on saved places (Eat and Travel) ---------- */
 const noteHTML = i => i.note ? `<div class="pnote" data-act="note" data-id="${esc(i.id)}" title="Edit note">📝 ${esc(i.note)}</div>` : "";
 const noteBtn = i => `<button data-act="note" data-id="${esc(i.id)}">${i.note?"Edit note":"Add note"}</button>`;
@@ -648,15 +660,15 @@ function tripHTML(i){
 function tripItemHTML(i){
   const trip=state.items.find(t=>t.id===i.trip)||{};
   const meta=[i.type, i.area].filter(Boolean);
-  const desc=[i.address, i.hours?("Open "+i.hours):""].filter(Boolean).join(" · ");
+  const desc=i.address||"";
   return `<div class="item${i.done?" done":""}">
     <button class="tick" data-act="toggle" data-id="${esc(i.id)}" aria-label="${i.done?"Mark as not done":"Mark as done"}">${CHECK}</button>
     <div class="body">
       <div class="t">${esc(i.title)}</div>
       <div class="meta"><span class="cat">${esc(CATS[i.cat]||CATS.do)}</span>${meta.map(m=>`<span>${esc(m)}</span>`).join("")}</div>
       ${desc?`<div class="desc">${esc(desc)}</div>`:""}
-      ${noteHTML(i)}
-      <div class="acts"><a href="${placeLink(i.title, i.address||trip.title)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}${noteBtn(i)}<button data-act="plan" data-id="${esc(i.id)}">Make it a plan</button><button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
+      ${hoursHTML(i)}${noteHTML(i)}
+      <div class="acts"><a href="${placeLink(i.title, i.address||trip.title)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}${hoursBtn(i)}${noteBtn(i)}<button data-act="plan" data-id="${esc(i.id)}">Make it a plan</button><button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
     </div></div>`;
 }
 function tripDetailHTML(trip){
@@ -762,7 +774,7 @@ function openTripSearch(trip){
     let arr; try{ arr=await searchNear(trip,q); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Place search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
     if(seq!==searchSeq) return;
     if(!arr.length){ $("#results").innerHTML=`<p class="status">No matches near ${esc(trip.title)}. Try a shorter name or another word in English, like “sushi”, “castle” or “park”.</p>`; return; }
-    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[CATS[r.cat],r.type].filter(Boolean), desc:[r.address, r.hours?("Open "+r.hours):""].filter(Boolean).join(" · "),
+    $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[CATS[r.cat],r.type].filter(Boolean), desc:r.address||"",
       link:`<a href="${placeLink(r.name, r.address||trip.title)}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
     wireAdds(arr,r=>({kind:"tripitem",trip:trip.id,title:r.name,cat:r.cat,type:r.type,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon}));
   };
