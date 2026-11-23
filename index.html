@@ -491,10 +491,10 @@ async function overpass(query){
   }
   throw new Error("overpass");
 }
-async function nominatim(q, lat, lon, radius){
+async function nominatim(q, lat, lon, radius, bounded=true){
   const dy=radius/111000, dx=radius/(111000*Math.cos(lat*Math.PI/180));
   const vb=[lon-dx,lat+dy,lon+dx,lat-dy].map(n=>n.toFixed(5)).join(",");
-  const r=await fetchT(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&extratags=1&namedetails=1&accept-language=en&limit=40&bounded=1&viewbox=${vb}&q=${encodeURIComponent(q)}`);
+  const r=await fetchT(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&extratags=1&namedetails=1&accept-language=en&limit=40${bounded?"&bounded=1":""}&viewbox=${vb}&q=${encodeURIComponent(q)}`);
   if(!r.ok) throw new Error("nominatim "+r.status);
   return (await r.json()).map(x=>{ const a=x.address||{}, nd=x.namedetails||{};
     return { lat:+x.lat, lon:+x.lon, tags:{ ...(x.extratags||{}), name:nd.name||x.name, "name:en":nd["name:en"]||"", [x.category]:x.type,
@@ -507,12 +507,34 @@ async function gather(jobs){ // each source gets at most 10 seconds
   if(got.every(g=>g.status==="rejected")) throw new Error("osm");
   return got.flatMap(g=>g.status==="fulfilled"?g.value:[]);
 }
+/* forgiving name search: ignores accents ("Viña" = "Vina"), and if nothing matches, tries again with
+   just the distinctive words ("Bar Txiki" → "Txiki") and a looser area. */
+const fold = s => String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+const ACC = {a:"aáàâäã",e:"eéèêë",i:"iíìîï",o:"oóòôöõ",u:"uúùûü",n:"nñ",c:"cç",y:"yý"};
+const fuzzyRe = q => fold(q).replace(/[.*+?^${}()|[\]\\"]/g,"\\$&").replace(/[aeioucny]/g,ch=>"["+ACC[ch]+"]");
+const GENERIC = new Set(["bar","bars","restaurant","restaurante","restaurants","cafe","cafes","pub","the","la","el","le","les","los","las","de","del","da","di","y","and","og"]);
+const keyWords = q => fold(q).split(/[^a-z0-9]+/).filter(w=>w.length>1 && !GENERIC.has(w));
+const distKm = (a,b,c,d) => Math.hypot((c-a)*111, (d-b)*111*Math.cos(a*Math.PI/180));
+async function forgivingSearch({q, lat, lon, rad, place, eatOnly, keep}){
+  const A=`(around:${Math.min(rad,8000)},${lat},${lon})`;
+  const sel = eatOnly ? [`nwr["amenity"~"^(restaurant|cafe|bar|pub|fast_food|ice_cream)$"]`]
+    : [`nwr["amenity"~"^(restaurant|cafe|bar|pub|fast_food|ice_cream)$"]`,`nwr["tourism"]`,`nwr["historic"]`,`nwr["leisure"~"^(park|garden|beach_resort|water_park|marina|nature_reserve)$"]`];
+  const ov = re => `[out:json][timeout:25];(${sel.map(x=>`${x}["name"~"${re}",i]${A};`).join("")}nwr["amenity"~"^(restaurant|cafe|bar)$"]["cuisine"~"${re}",i]${A};`+
+    (eatOnly?"":`nwr["tourism"~"^(attraction|museum|gallery|viewpoint|zoo|aquarium|theme_park)$"]["tourism"~"${re}",i]["name"]${A};`)+`);out center tags 40;`;
+  let els=(await gather([nominatim(q,lat,lon,rad), overpass(ov(fuzzyRe(q)))])).filter(keep);
+  const words=keyWords(q);
+  if(!els.length && words.length){
+    const longest=[...words].sort((a,b)=>b.length-a.length)[0];
+    els=(await gather([nominatim(words.join(" ")+", "+place,lat,lon,rad,false), overpass(ov(fuzzyRe(longest)))])).filter(keep)
+      .filter(e=>{ const la=e.lat||e.center?.lat, lo=e.lon||e.center?.lon; return la==null || distKm(lat,lon,la,lo) < Math.max(25,rad/1000*3); });
+  }
+  return els;
+}
+const byMatch = q => { const ql=fold(q||""); return (a,b)=> ql ? fold(b.name).includes(ql)-fold(a.name).includes(ql) : 0; };
 async function searchPlaces(q){
-  const r = reEsc(q);
-  const query = `[out:json][timeout:20];(nwr["amenity"~"^(restaurant|cafe|bar|pub|fast_food|ice_cream)$"]["name"~"${r}",i](${CPH_BBOX});nwr["amenity"~"^(restaurant|cafe|bar)$"]["cuisine"~"${r}",i](${CPH_BBOX}););out center tags 40;`;
-  const els = await gather([nominatim(q, 55.675, 12.56, 8000), overpass(query)]);
+  const els = await forgivingSearch({q, lat:55.675, lon:12.56, rad:8000, place:"Copenhagen", eatOnly:true, keep:e=>e.tags&&e.tags.name&&EAT_AMENITY.test(e.tags.amenity||"")});
   const seen=new Set();
-  return els.filter(e=>e.tags&&e.tags.name&&EAT_AMENITY.test(e.tags.amenity||"")).map(e=>{ const t=e.tags;
+  return els.map(e=>{ const t=e.tags;
     const cuisine=(t.cuisine||"").split(";").map(c=>c.replace(/_/g," ")).filter(Boolean).slice(0,3).join(", ");
     const kind={cafe:"Café",bar:"Bar",pub:"Pub",fast_food:"Fast food",ice_cream:"Ice cream"}[t.amenity];
     return { name:t.name, cuisine:[kind,cuisine].filter(Boolean).join(" · ") || "Restaurant",
@@ -521,7 +543,7 @@ async function searchPlaces(q){
       hours:t.opening_hours||"", website:t.website||t["contact:website"]||"", phone:t.phone||t["contact:phone"]||"",
       lat:e.lat||e.center?.lat, lon:e.lon||e.center?.lon };
   }).filter(p=>{ const k=p.name.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; })
-    .sort((a,b)=>(b.name.toLowerCase().includes(q.toLowerCase()))-(a.name.toLowerCase().includes(q.toLowerCase()))).slice(0,20);
+    .sort(byMatch(q)).slice(0,20);
 }
 function openEatSearch(){
   openSheet(`${head("Find a restaurant")}
@@ -532,7 +554,7 @@ function openEatSearch(){
     const seq=searching();
     let arr; try{ arr=await searchPlaces(q); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Restaurant search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
     if(seq!==searchSeq) return;
-    if(!arr.length){ $("#results").innerHTML=`<p class="status">No matches in Copenhagen. Try a shorter name or another cuisine word (in English, like “sushi” or “italian”).</p>`; return; }
+    if(!arr.length){ $("#results").innerHTML=`<p class="status">Couldn't find “${esc(q)}” on the map in Copenhagen. Small places are sometimes missing, so you can add it yourself.</p><div class="bar"><button class="btn" id="byhand">Add “${esc(q)}” by hand</button></div>`; $("#byhand").onclick=()=>openManual("eat",q); return; }
     $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[r.cuisine,r.area].filter(Boolean), desc:r.address||"",
       link:`<a href="${mapLink({title:r.name,address:r.address})}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
     wireAdds(arr,r=>({kind:"eat",title:r.name,cuisine:r.cuisine,area:r.area,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon}));
@@ -581,14 +603,14 @@ function openIdeas(){
 }
 
 /* ---------- manual add ---------- */
-function openManual(kind){
+function openManual(kind, prefill=""){
   const extra = {
     watch:`<div class="grid2"><label class="f">Type<select id="m-type"><option value="movie">Movie</option><option value="tv">TV show</option></select></label><label class="f">Year<input id="m-year" inputmode="numeric"></label></div><label class="f">Note<textarea id="m-notes"></textarea></label>`,
     eat:`<div class="grid2"><label class="f">Cuisine<input id="m-cuisine"></label><label class="f">Address or area<input id="m-address" placeholder="e.g. Vesterbro"></label></div><label class="f">Note<textarea id="m-notes"></textarea></label>`,
     idea:`<label class="f">Details<textarea id="m-notes"></textarea></label>`
   }[kind];
   openSheet(`${head({watch:"Add a movie or show",eat:"Add a restaurant",idea:"Add a date idea"}[kind])}
-    <form id="mf" style="display:flex;flex-direction:column;gap:10px"><label class="f">${kind==="eat"?"Name":"Title"}<input id="m-title" required></label>${extra}<button class="btn">Add to list</button></form>`);
+    <form id="mf" style="display:flex;flex-direction:column;gap:10px"><label class="f">${kind==="eat"?"Name":"Title"}<input id="m-title" required value="${esc(prefill)}"></label>${extra}<button class="btn">Add to list</button></form>`);
   $("#mf").addEventListener("submit",async e=>{ e.preventDefault();
     const v=id=>{ const el=$("#"+id); return el?el.value.trim():""; };
     const title=v("m-title"); if(!title) return;
@@ -744,18 +766,16 @@ async function searchNear(trip, q){
     try{ els=await overpass(query); }
     catch(e){ els=await nominatim("attraction",trip.lat,trip.lon,rad); try{ els=els.concat(await nominatim("museum",trip.lat,trip.lon,rad)); }catch(e2){} }
   } else {
-    const r=reEsc(q);
-    const query=`[out:json][timeout:25];(nwr["amenity"~"^(restaurant|cafe|bar)$"]["cuisine"~"${r}",i]${A};nwr["tourism"~"^(attraction|museum|gallery|viewpoint|zoo|aquarium|theme_park)$"]["tourism"~"${r}",i]["name"]${A};);out center tags 40;`;
-    els=await gather([nominatim(q,trip.lat,trip.lon,trip.radius||6000), overpass(query)]);
+    els=await forgivingSearch({q, lat:trip.lat, lon:trip.lon, rad:trip.radius||6000, place:trip.title, keep:e=>e.tags&&(e.tags["name:en"]||e.tags.name)&&useful(e.tags)});
   }
-  const seen=new Set(), ql=(q||"").toLowerCase();
+  const seen=new Set();
   return els.filter(e=>e.tags&&(e.tags["name:en"]||e.tags.name)&&useful(e.tags)).map(e=>{ const t=e.tags;
     return { name:t["name:en"]||t.name, cat:catOf(t), type:typeOf(t),
       address:[ [t["addr:street"],t["addr:housenumber"]].filter(Boolean).join(" "), t["addr:postcode"], t["addr:city"] ].filter(Boolean).join(", "),
       hours:t.opening_hours||"", website:t.website||t["contact:website"]||"", phone:t.phone||t["contact:phone"]||"",
       lat:e.lat||e.center?.lat, lon:e.lon||e.center?.lon };
   }).filter(p=>{ const k=p.name.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; })
-    .sort((a,b)=>(ql?(b.name.toLowerCase().includes(ql))-(a.name.toLowerCase().includes(ql)):0) || CAT_KEYS.indexOf(a.cat)-CAT_KEYS.indexOf(b.cat)).slice(0,25);
+    .sort((a,b)=>byMatch(q)(a,b) || CAT_KEYS.indexOf(a.cat)-CAT_KEYS.indexOf(b.cat)).slice(0,25);
 }
 function openTripSearch(trip){
   openSheet(`${head("Find places in "+esc(trip.title))}
@@ -773,7 +793,9 @@ function openTripSearch(trip){
     }
     let arr; try{ arr=await searchNear(trip,q); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Place search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
     if(seq!==searchSeq) return;
-    if(!arr.length){ $("#results").innerHTML=`<p class="status">No matches near ${esc(trip.title)}. Try a shorter name or another word in English, like “sushi”, “castle” or “park”.</p>`; return; }
+    if(!arr.length){ $("#results").innerHTML = q==null ? `<p class="status">No well-known sights found near ${esc(trip.title)}. Try searching by name instead.</p>`
+      : `<p class="status">Couldn't find “${esc(q)}” on the map near ${esc(trip.title)}. Small places are sometimes missing, so you can add it yourself.</p><div class="bar"><button class="btn" id="byhand">Add “${esc(q)}” by hand</button></div>`;
+      if($("#byhand")) $("#byhand").onclick=()=>openTripManual(trip,q); return; }
     $("#results").innerHTML=resultsHTML(arr,r=>({title:r.name, meta:[CATS[r.cat],r.type].filter(Boolean), desc:r.address||"",
       link:`<a href="${placeLink(r.name, r.address||trip.title)}" target="_blank" rel="noopener">Map &amp; reviews</a>${r.website?`<a href="${esc(r.website)}" target="_blank" rel="noopener">Website</a>`:""}`}));
     wireAdds(arr,r=>({kind:"tripitem",trip:trip.id,title:r.name,cat:r.cat,type:r.type,address:r.address,hours:r.hours,website:r.website,phone:r.phone,lat:r.lat,lon:r.lon}));
@@ -781,11 +803,11 @@ function openTripSearch(trip){
   $("#sf").addEventListener("submit",e=>{ e.preventDefault(); const q=$("#sq").value.trim(); if(!q) return; $("#sq").blur(); run(q); });
   $("#pop").onclick=()=>run(null);
 }
-function openTripManual(trip){
+function openTripManual(trip, prefill=""){
   const def=CAT_KEYS[state.cat-1]||"eat";
   openSheet(`${head("Add to "+esc(trip.title))}
     <form id="mf" style="display:flex;flex-direction:column;gap:10px">
-      <label class="f">Name<input id="m-title" required></label>
+      <label class="f">Name<input id="m-title" required value="${esc(prefill)}"></label>
       <div class="grid2"><label class="f">Type<select id="m-cat">${CAT_KEYS.map(c=>`<option value="${c}"${c===def?" selected":""}>${CATS[c]}</option>`).join("")}</select></label>
       <label class="f">Address or area<input id="m-address"></label></div>
       <label class="f">Note<textarea id="m-notes" placeholder="Book ahead? Who recommended it?"></textarea></label>
