@@ -472,16 +472,42 @@ function showWatchResults(arr){
   wireAdds(arr,r=>({kind:"watch",title:r.title,type:r.type,year:r.year,genre:r.genre,length:r.length,overview:(r.overview||"").slice(0,600),poster:r.poster,...(r.tmdb?{tmdb:r.tmdb}:{} )}));
 }
 
-/* ---------- restaurants: OpenStreetMap via Overpass, no keys ---------- */
+/* ---------- place search: OpenStreetMap, no keys ----------
+   Nominatim (the OSM search engine) does the main search; Overpass adds cuisine matches and popular sights.
+   The public Overpass server is often overloaded, so it tries a few mirrors, and a search only fails if both sources fail. */
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\"]/g,"\\$&");
+const OVERPASS = ["https://overpass-api.de/api/interpreter","https://overpass.private.coffee/api/interpreter","https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
+const EAT_AMENITY = /^(restaurant|cafe|bar|pub|fast_food|ice_cream|biergarten|food_court)$/;
+async function fetchT(url, opts={}, ms=12000){ const c=new AbortController(), t=setTimeout(()=>c.abort(),ms); try{ return await fetch(url,{...opts,signal:c.signal}); } finally{ clearTimeout(t); } }
+async function overpass(query){
+  for(const u of OVERPASS){
+    try{ const r=await fetchT(u,{method:"POST",body:"data="+encodeURIComponent(query),headers:{"Content-Type":"application/x-www-form-urlencoded"}},8000);
+      if(r.ok){ const d=await r.json(); if(d && Array.isArray(d.elements)) return d.elements; } }catch(e){}
+  }
+  throw new Error("overpass");
+}
+async function nominatim(q, lat, lon, radius){
+  const dy=radius/111000, dx=radius/(111000*Math.cos(lat*Math.PI/180));
+  const vb=[lon-dx,lat+dy,lon+dx,lat-dy].map(n=>n.toFixed(5)).join(",");
+  const r=await fetchT(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&extratags=1&namedetails=1&accept-language=en&limit=40&bounded=1&viewbox=${vb}&q=${encodeURIComponent(q)}`);
+  if(!r.ok) throw new Error("nominatim "+r.status);
+  return (await r.json()).map(x=>{ const a=x.address||{}, nd=x.namedetails||{};
+    return { lat:+x.lat, lon:+x.lon, tags:{ ...(x.extratags||{}), name:nd.name||x.name, "name:en":nd["name:en"]||"", [x.category]:x.type,
+      "addr:street":a.road||a.pedestrian||"", "addr:housenumber":a.house_number||"", "addr:postcode":a.postcode||"", "addr:city":a.city||a.town||a.village||"" } };
+  });
+}
+const within = (pr, ms) => Promise.race([pr, new Promise((_,no)=>setTimeout(()=>no(new Error("slow")),ms))]);
+async function gather(jobs){ // each source gets at most 10 seconds
+  const got=await Promise.allSettled(jobs.map(j=>within(j,10000)));
+  if(got.every(g=>g.status==="rejected")) throw new Error("osm");
+  return got.flatMap(g=>g.status==="fulfilled"?g.value:[]);
+}
 async function searchPlaces(q){
   const r = reEsc(q);
   const query = `[out:json][timeout:20];(nwr["amenity"~"^(restaurant|cafe|bar|pub|fast_food|ice_cream)$"]["name"~"${r}",i](${CPH_BBOX});nwr["amenity"~"^(restaurant|cafe|bar)$"]["cuisine"~"${r}",i](${CPH_BBOX}););out center tags 40;`;
-  const res = await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:"data="+encodeURIComponent(query),headers:{"Content-Type":"application/x-www-form-urlencoded"}});
-  if(!res.ok) throw new Error("osm");
-  const d = await res.json();
+  const els = await gather([nominatim(q, 55.675, 12.56, 8000), overpass(query)]);
   const seen=new Set();
-  return (d.elements||[]).filter(e=>e.tags&&e.tags.name).map(e=>{ const t=e.tags;
+  return els.filter(e=>e.tags&&e.tags.name&&EAT_AMENITY.test(e.tags.amenity||"")).map(e=>{ const t=e.tags;
     const cuisine=(t.cuisine||"").split(";").map(c=>c.replace(/_/g," ")).filter(Boolean).slice(0,3).join(", ");
     const kind={cafe:"Café",bar:"Bar",pub:"Pub",fast_food:"Fast food",ice_cream:"Ice cream"}[t.amenity];
     return { name:t.name, cuisine:[kind,cuisine].filter(Boolean).join(" · ") || "Restaurant",
@@ -489,7 +515,7 @@ async function searchPlaces(q){
       area: t["addr:city"] && t["addr:city"]!=="København" ? t["addr:city"] : "",
       hours:t.opening_hours||"", website:t.website||t["contact:website"]||"", phone:t.phone||t["contact:phone"]||"",
       lat:e.lat||e.center?.lat, lon:e.lon||e.center?.lon };
-  }).filter(p=>{ const k=p.name+"|"+p.address; if(seen.has(k)) return false; seen.add(k); return true; })
+  }).filter(p=>{ const k=p.name.toLowerCase(); if(seen.has(k)) return false; seen.add(k); return true; })
     .sort((a,b)=>(b.name.toLowerCase().includes(q.toLowerCase()))-(a.name.toLowerCase().includes(q.toLowerCase()))).slice(0,20);
 }
 function openEatSearch(){
@@ -679,23 +705,21 @@ function typeOf(t){
   if(t.leisure) return nice(t.leisure);
   return "Sight";
 }
+const useful = t => EAT_AMENITY.test(t.amenity||"") || t.tourism || t.historic || /^(park|garden|beach_resort|water_park|marina|nature_reserve)$/.test(t.leisure||"");
 async function searchNear(trip, q){
-  const A=`(around:${trip.radius||6000},${trip.lat},${trip.lon})`;
-  let body;
-  if(q==null){ // popular sights: well-known attractions (they have a Wikidata entry)
-    body=`nwr["tourism"~"^(attraction|museum|gallery|viewpoint|zoo|aquarium|theme_park)$"]["name"]["wikidata"]${A};nwr["historic"~"^(castle|monument|palace|ruins|cathedral)$"]["name"]["wikidata"]${A};`;
+  const rad=Math.min(trip.radius||6000, 8000), A=`(around:${rad},${trip.lat},${trip.lon})`;
+  let els;
+  if(q==null){ // popular sights: well-known attractions (they have a Wikidata entry); falls back to a plain search
+    const query=`[out:json][timeout:25];(nwr["tourism"~"^(attraction|museum|gallery|viewpoint|zoo|aquarium|theme_park)$"]["name"]["wikidata"]${A};nwr["historic"~"^(castle|monument|palace|ruins|cathedral)$"]["name"]["wikidata"]${A};);out center tags 60;`;
+    try{ els=await overpass(query); }
+    catch(e){ els=await nominatim("attraction",trip.lat,trip.lon,rad); try{ els=els.concat(await nominatim("museum",trip.lat,trip.lon,rad)); }catch(e2){} }
   } else {
     const r=reEsc(q);
-    body=`nwr["amenity"~"^(restaurant|cafe|bar|pub|fast_food|ice_cream)$"]["name"~"${r}",i]${A};nwr["amenity"~"^(restaurant|cafe|bar)$"]["cuisine"~"${r}",i]${A};`+
-      `nwr["tourism"]["name"~"${r}",i]${A};nwr["tourism"~"^(attraction|museum|gallery|viewpoint|zoo|aquarium|theme_park)$"]["tourism"~"${r}",i]["name"]${A};`+
-      `nwr["historic"]["name"~"${r}",i]${A};nwr["leisure"~"^(park|garden|beach_resort|water_park|marina|nature_reserve)$"]["name"~"${r}",i]${A};`;
+    const query=`[out:json][timeout:25];(nwr["amenity"~"^(restaurant|cafe|bar)$"]["cuisine"~"${r}",i]${A};nwr["tourism"~"^(attraction|museum|gallery|viewpoint|zoo|aquarium|theme_park)$"]["tourism"~"${r}",i]["name"]${A};);out center tags 40;`;
+    els=await gather([nominatim(q,trip.lat,trip.lon,trip.radius||6000), overpass(query)]);
   }
-  const query=`[out:json][timeout:25];(${body});out center tags 60;`;
-  const res=await fetch("https://overpass-api.de/api/interpreter",{method:"POST",body:"data="+encodeURIComponent(query),headers:{"Content-Type":"application/x-www-form-urlencoded"}});
-  if(!res.ok) throw new Error("osm");
-  const d=await res.json(), seen=new Set();
-  const ql=(q||"").toLowerCase();
-  return (d.elements||[]).filter(e=>e.tags&&(e.tags["name:en"]||e.tags.name)).map(e=>{ const t=e.tags;
+  const seen=new Set(), ql=(q||"").toLowerCase();
+  return els.filter(e=>e.tags&&(e.tags["name:en"]||e.tags.name)&&useful(e.tags)).map(e=>{ const t=e.tags;
     return { name:t["name:en"]||t.name, cat:catOf(t), type:typeOf(t),
       address:[ [t["addr:street"],t["addr:housenumber"]].filter(Boolean).join(" "), t["addr:postcode"], t["addr:city"] ].filter(Boolean).join(", "),
       hours:t.opening_hours||"", website:t.website||t["contact:website"]||"", phone:t.phone||t["contact:phone"]||"",
@@ -709,9 +733,14 @@ function openTripSearch(trip){
     <div class="bar"><button type="button" class="btn ghost" id="pop">Show popular sights</button></div>
     <p class="note">Searches around ${esc(trip.title)} on OpenStreetMap. Use “Map &amp; reviews” for photos and ratings.</p>
     <div class="list" id="results"></div>`);
-  if(trip.lat==null){ $("#results").innerHTML=`<p class="status">Couldn't find ${esc(trip.title)} on the map. Try editing the destination name (for example add the country), or add places by hand.</p>`; $("#sf").hidden=true; $("#pop").hidden=true; return; }
   const run=async q=>{
     const seq=searching();
+    if(trip.lat==null){ // destination wasn't found when it was added: try again now
+      const g=await geocode(trip.title);
+      if(seq!==searchSeq) return;
+      if(!g){ $("#results").innerHTML=`<p class="status">Couldn't find ${esc(trip.title)} on the map. Try editing the destination name (for example add the country), or add places by hand.</p>`; return; }
+      Object.assign(trip,g); patchItem(state.items.find(i=>i.id===trip.id)||trip, g);
+    }
     let arr; try{ arr=await searchNear(trip,q); }catch(err){ if(seq===searchSeq) $("#results").innerHTML=`<p class="status">Place search isn't reachable right now. Try again in a minute, or add it by hand.</p>`; return; }
     if(seq!==searchSeq) return;
     if(!arr.length){ $("#results").innerHTML=`<p class="status">No matches near ${esc(trip.title)}. Try a shorter name or another word in English, like “sushi”, “castle” or “park”.</p>`; return; }
