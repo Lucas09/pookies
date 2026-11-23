@@ -116,6 +116,7 @@ label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--mu
 .score small{font-size:20px;color:var(--muted)}
 input[type=range]{accent-color:var(--accent);padding:0;border:0;background:none}
 .who{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.pnote{font-size:14px;background:#FFF0F5;border:1px solid var(--line);border-radius:12px;padding:6px 10px;white-space:pre-wrap;overflow-wrap:anywhere;cursor:pointer}
 .t.link{cursor:pointer}
 .trip-head{background:var(--surface);border:1px solid var(--line);box-shadow:0 4px 16px rgba(214,51,132,.08);border-radius:var(--radius);padding:14px 16px;display:flex;flex-direction:column;gap:4px}
 .trip-head .back{align-self:flex-start;font:600 13px var(--body);color:var(--muted);background:none;border:0;padding:0 0 4px;cursor:pointer}
@@ -283,7 +284,7 @@ function itemHTML(i){
     links=`<a href="${mapLink(i)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}`; }
   if(i.kind==="idea"){ meta=[i.cost, i.when].filter(Boolean); desc=i.notes; }
   if(i.kind==="plan"){ desc=i.notes; }
-  if(i.note && i.kind!=="idea" && i.kind!=="plan") desc = desc ? desc+" — "+i.note : i.note;
+  if(i.note && i.kind==="watch") desc = desc ? desc+" — "+i.note : i.note;
   const date = i.kind==="plan" ? `<div class="date">${esc(i.date?fmtDate(i.date,i.time):"No date yet")}</div>` : "";
   const rs = i.kind==="watch" ? Object.entries(i.ratings||{}).filter(([,v])=>typeof v==="number") : [];
   const avg = rs.length ? fmtScore(rs.reduce((a,[,v])=>a+v,0)/rs.length) : "";
@@ -297,7 +298,8 @@ function itemHTML(i){
       ${meta.length?`<div class="meta">${meta.map(m=>`<span>${esc(m)}</span>`).join("")}</div>`:""}
       ${ratingRow}
       ${desc?`<div class="desc${i.kind==="watch"?" clamp":""}">${esc(desc)}</div>`:""}
-      <div class="acts">${links}${rateBtn}${planBtn}<button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
+      ${i.kind==="eat"?noteHTML(i):""}
+      <div class="acts">${links}${i.kind==="eat"?noteBtn(i):""}${rateBtn}${planBtn}<button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
     </div></div>`;
 }
 
@@ -345,6 +347,7 @@ $("#list").addEventListener("click", async e=>{
   const act=b.dataset.act;
   if(act==="open"){ state.trip=it.id; state.cat=0; render(); window.scrollTo({top:0}); return; }
   if(act==="edittrip"){ openTripForm(it); return; }
+  if(act==="note"){ openNote(it); return; }
   if(act==="toggle"){ const nowDone=!it.done; await patchItem(it,{done:nowDone}); if(nowDone && it.kind==="watch") openRate(state.items.find(i=>i.id===it.id)||it); }
   if(act==="rate") openRate(it);
   if(act==="del"){
@@ -595,6 +598,20 @@ function openManual(kind){
   });
 }
 
+/* ---------- notes on saved places (Eat and Travel) ---------- */
+const noteHTML = i => i.note ? `<div class="pnote" data-act="note" data-id="${esc(i.id)}" title="Edit note">📝 ${esc(i.note)}</div>` : "";
+const noteBtn = i => `<button data-act="note" data-id="${esc(i.id)}">${i.note?"Edit note":"Add note"}</button>`;
+function openNote(it){
+  openSheet(`${head("Note on "+esc(it.title))}
+    <form id="nf" style="display:flex;flex-direction:column;gap:10px">
+      <label class="f">Note<textarea id="n-text" rows="4" placeholder="What to order, book ahead, who recommended it…">${esc(it.note||"")}</textarea></label>
+      <div class="bar"><button class="btn grow">Save note</button>${it.note?`<button type="button" class="btn plain" id="n-del">Delete note</button>`:""}</div></form>`);
+  const ta=$("#n-text"); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
+  const save=async note=>{ const cur=state.items.find(i=>i.id===it.id)||it; if(await patchItem(cur,{note})){ closeSheet(); toast(note?"Note saved":"Note deleted"); } };
+  $("#nf").addEventListener("submit",e=>{ e.preventDefault(); save($("#n-text").value.trim()); });
+  if($("#n-del")) $("#n-del").onclick=()=>save("");
+}
+
 /* ---------- plans ---------- */
 function openPlan(p){
   const editing=!!p.id;
@@ -631,14 +648,15 @@ function tripHTML(i){
 function tripItemHTML(i){
   const trip=state.items.find(t=>t.id===i.trip)||{};
   const meta=[i.type, i.area].filter(Boolean);
-  const desc=[i.address, i.hours?("Open "+i.hours):"", i.note].filter(Boolean).join(" · ");
+  const desc=[i.address, i.hours?("Open "+i.hours):""].filter(Boolean).join(" · ");
   return `<div class="item${i.done?" done":""}">
     <button class="tick" data-act="toggle" data-id="${esc(i.id)}" aria-label="${i.done?"Mark as not done":"Mark as done"}">${CHECK}</button>
     <div class="body">
       <div class="t">${esc(i.title)}</div>
       <div class="meta"><span class="cat">${esc(CATS[i.cat]||CATS.do)}</span>${meta.map(m=>`<span>${esc(m)}</span>`).join("")}</div>
       ${desc?`<div class="desc">${esc(desc)}</div>`:""}
-      <div class="acts"><a href="${placeLink(i.title, i.address||trip.title)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}<button data-act="plan" data-id="${esc(i.id)}">Make it a plan</button><button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
+      ${noteHTML(i)}
+      <div class="acts"><a href="${placeLink(i.title, i.address||trip.title)}" target="_blank" rel="noopener">Map &amp; reviews</a>${i.website?`<a href="${esc(i.website)}" target="_blank" rel="noopener">Website</a>`:""}${noteBtn(i)}<button data-act="plan" data-id="${esc(i.id)}">Make it a plan</button><button class="del" data-act="del" data-id="${esc(i.id)}">Remove</button></div>
     </div></div>`;
 }
 function tripDetailHTML(trip){
