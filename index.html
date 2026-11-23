@@ -363,7 +363,7 @@ $("#list").addEventListener("click", async e=>{
 
 /* ---------- sheet ---------- */
 function openSheet(html){ $("#sheet").innerHTML=html; $("#scrim").hidden=false; document.body.style.overflow="hidden"; const f=$("#sheet").querySelector("input,textarea"); if(f && matchMedia("(min-width:760px)").matches) f.focus(); }
-function closeSheet(){ $("#scrim").hidden=true; $("#sheet").innerHTML=""; document.body.style.overflow=""; searchSeq++; }
+function closeSheet(){ $("#scrim").hidden=true; $("#sheet").innerHTML=""; document.body.style.overflow=""; searchSeq++; if(newVersion) setTimeout(checkForUpdate,300); }
 $("#scrim").addEventListener("click",e=>{ if(e.target.id==="scrim"||e.target.closest("[data-close]")) closeSheet(); });
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"&&!$("#scrim").hidden) closeSheet(); });
 const head = t => `<div class="row"><h2>${t}</h2><button class="btn plain" data-close>Close</button></div>`;
@@ -933,6 +933,35 @@ render();
 load().then(async()=>{ if(state.ready && await seedIfNeeded()) await load(); if(state.ready) enrich(); });
 document.addEventListener("visibilitychange",()=>{ if(!document.hidden) load(); });
 setInterval(()=>{ if(!document.hidden && $("#scrim").hidden) load(); },30000);
+
+/* ---------- pick up new versions of the site by itself ----------
+   iPhone home-screen apps keep serving the old page. This fetches the live page from the network,
+   compares its code with the code that is running, and reloads (with a cache-busting address) when it changed.
+   It waits while a sheet is open so nothing you're typing gets lost. */
+const RUNNING_CODE = (document.querySelector("script:not([src])")||{}).textContent || "";
+let newVersion=false, checkingVersion=false;
+async function checkForUpdate(){
+  if(checkingVersion || !RUNNING_CODE || location.protocol==="file:") return;
+  checkingVersion=true;
+  try{
+    if(!newVersion){
+      const r=await fetch(location.pathname+"?check="+Date.now(),{cache:"reload"});
+      if(!r.ok) return;
+      const doc=new DOMParser().parseFromString(await r.text(),"text/html");
+      const live=(doc.querySelector("script:not([src])")||{}).textContent||"";
+      newVersion = !!live && live.trim()!==RUNNING_CODE.trim();
+    }
+    if(newVersion && $("#scrim").hidden && !document.querySelector(".lightbox")){
+      try{ await fetch(location.pathname,{cache:"reload"}); }catch(e){} // refresh the browser's copy too
+      location.replace(location.pathname+"?v="+Date.now()+location.hash);
+    }
+  }catch(e){} finally{ checkingVersion=false; }
+}
+if(/[?&]v=\d/.test(location.search)) history.replaceState(null,"",location.pathname+location.hash); // tidy the address after an update
+setTimeout(checkForUpdate,1500);
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden) checkForUpdate(); });
+window.addEventListener("pageshow",e=>{ if(e.persisted) checkForUpdate(); });
+setInterval(()=>{ if(!document.hidden) checkForUpdate(); },5*60*1000);
 </script>
 </body>
 </html>
